@@ -1,10 +1,10 @@
-# OpenVPN Proxy
+# Wireguard Proxy
 
-An HTTP proxy server which (selectively) tunnels traffic over an OpenVPN connection.
+An HTTP proxy server which (selectively) tunnels traffic over an Wireguard connection.
 
 ## Why?
 
-If your company has a vast array of servers on different IP ranges (e.g. cloud servers/services) then it can be impractical to maintain a list of routes that OpenVPN should push to clients - it's much easier just to tunnel all the traffic.
+If your company has a vast array of servers on different IP ranges (e.g. cloud servers/services) then it can be impractical to maintain a list of routes that Wireguard should push to clients - it's much easier just to tunnel all the traffic.
 But then things that need low latency suffer - video calls etc. Besides you might not want _all_ your traffic going through the company...
 
 Another use case is for VPN services that let you appear in a different country. You may only want some websites' traffic to appear in this country.
@@ -13,12 +13,12 @@ Another use case is for VPN services that let you appear in a different country.
 
 The easiest way to get started is with `docker-compose` - see `docker-compose.yml` for an example.
 You can also just use `docker run` or any other way to run a docker container.
-Note that special capabilities are required, specifically `NET_ADMIN` and access to `/dev/net/tun` device.
+Note that special capabilities are required, specifically `NET_ADMIN` .
 
 ## Tags
 
-It's best to use `latest` if you can. 
-Or you can use a specific version tag - tags are based on the OpenVPN version.
+It's best to use `latest` if you can.
+Or you can use a specific version tag - tags are based on the Wireguard version.
 
 ### Mounts
 
@@ -26,7 +26,7 @@ Pass mounts for `docker-compose` in `volumes` or to `docker run` with `-v "<host
 
 | What | Host path | Container path |
 |---|---|---|
-| OpenVPN config file | Path to your config file | `/config/config.ovpn` (or the value of `OPENVPN_CONFIG_FILE`) |
+| Wireguard config file | Path to your config file | `/config/` (or the value of `WG_CONFIG`) |
 
 ### Environment Variables
 
@@ -35,13 +35,10 @@ Pass values for `docker-compose` in `environment` or to `docker run` with `-e "<
 | Variable | Required? | Default | Example | Description |
 |---|---|---|---|---|
 | `LOCAL_NETWORK` | Yes | _none_ | `10.0.8.0/24` | Your local network's address. Required so return packets can reach you. |
-| `OPENVPN_USERNAME` | No | _none_ | `bob@example.com` | VPN username |
-| `OPENVPN_PASSWORD` | No | _none_ | `top-secret-123` | VPN password |
-| `OPENVPN_AUTO_CONFIG` | No | `true` | `false` | By default, modify the OpenVPN config dynamically so that a reference to the username/password can be inserted. Disable if it causes trouble or you want control. |
-| `OPENVPN_CONFIG_FILE` | No | `/config/config.ovpn` | `/my/path.ovpn` | Path to config file inside container |
-| `OPENVPN_TUNNEL_HOSTS` | No | _none_ | `*.corp.com,*.corp.io` | Patterns of which hosts to tunnel, comma separated. Unset means everything is tunneled. See [Split Tunneling](#split-tunneling) |
-| `OPENVPN_HOST` | No | `localhost` | `10.0.8.1` | Set this if this container runs on a different host to where you'll use it. |
-| `OPENVPN_PROXY_PORT` | No | `8080` | `1234` | Change proxy listening port. This must match the host port so that the auto-config file is correct. |
+| `WG_CONFIG` | Yes | `/config/` | `/my/wireguard/config/` | Path to config folder inside container |
+| `WG_TUNNEL_HOSTS` | No | _none_ | `*.corp.com,*.corp.io` | Patterns of which hosts to tunnel, comma separated. Unset means everything is tunneled. See [Split Tunneling](#split-tunneling) |
+| `WG_HOST` | No | `localhost` | `10.0.8.1` | Set this if this container runs on a different host to where you'll use it. |
+| `WG_PROXY_PORT` | No | `8080` | `1234` | Change proxy listening port. This must match the host port so that the auto-config file is correct. |
 
 ### Ports
 
@@ -63,7 +60,8 @@ For apps that don't support auto-configuration scripts you can set the HTTP prox
 You can tunnel SSH configurations, but this won't use your auto-configuration script. Instead install `corkscrew` and edit your `~/.ssh/config`. If you use `brew` you can `brew install corkscrew`.
 
 Example SSH config:
-```
+
+```c
 Host *.corp.com
     ProxyCommand /usr/local/bin/corkscrew localhost 8080 %h %p
 ```
@@ -72,17 +70,18 @@ Host *.corp.com
 
 An HTTP proxy server operates at the application layer and not on IP addresses so proxy configuration can be used to send traffic based on hostname patterns instead of IP address ranges.
 
-The way this works is with a [Proxy auto-configuration script](https://developer.mozilla.org/en-US/docs/Web/HTTP/Proxy_servers_and_tunneling/Proxy_Auto-Configuration_(PAC)_file). The built-in script will split traffic based on the value of the `OPENVPN_TUNNEL_HOSTS` variable. The patterns used are [glob](https://en.wikipedia.org/wiki/Glob_(programming)) however you should stick with just `*` and `?` for maximum compatibility.
+The way this works is with a [Proxy auto-configuration script](https://developer.mozilla.org/en-US/docs/Web/HTTP/Proxy_servers_and_tunneling/Proxy_Auto-Configuration_(PAC)_file). The built-in script will split traffic based on the value of the `WG_TUNNEL_HOSTS` variable. The patterns used are [glob](https://en.wikipedia.org/wiki/Glob_(programming)) however you should stick with just `*` and `?` for maximum compatibility.
 
 When your browser or other application wants to make a request to a given host, it will first check this script to decide whether to send the request through the proxy. Most apps/operating systems support this, see [Configure your apps](#configure-your-apps).
 
-If you would like a completely custom configuration with more esoteric switching rules you can create your own auto-configuration script and mount this to `/app/nginx/proxy.pac`. Environment variables will be interpolated at runtime (e.g. anything like `${OPENVPN_HOST}`).
+If you would like a completely custom configuration with more esoteric switching rules you can create your own auto-configuration script and mount this to `/app/nginx/proxy.pac`. Environment variables will be interpolated at runtime (e.g. anything like `${WG_HOST}`).
 
 ## Acknowledgements
 
-This project started as a fork of https://github.com/andyn922/docker-openvpn-proxy. Thanks andyn922!
+This project started as a fork of <https://github.com/andyn922/docker-openvpn-proxy> and <https://github.com/jonohill/docker-openvpn-proxy> . Thanks andyn922 and jonohill!
 
 Here are the differences from the original:
+
 - Generic, not focussed on PIA.
 - Split tunneling (i.e. proxy auto-configuration script).
 - Username/password auto-configuration.

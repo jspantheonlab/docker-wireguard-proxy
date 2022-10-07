@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Try `docker-compose up`
+
+services:
+    wg_proxy:
+        image: wireguard-proxy:local
+        build:
+            context: .
+            dockerfile: ./Dockerfile.local
+        cap_add:
+            - NET_ADMIN
+            # - SYS_MODULE
+        sysctls:
+        #     # wg-quick fails to set this without --privileged, so set it here instead if needed
+            - net.ipv4.conf.all.src_valid_mark=1
+        #     # May as well disable ipv6. Should be blocked anyway.
+        #     - net.ipv6.conf.default.disable_ipv6=1
+        #     - net.ipv6.conf.all.disable_ipv6=1
+        #     - net.ipv6.conf.lo.disable_ipv6=1
+        privileged: true
+        #     - NET_ADMIN
+        # devices:
+        #     - /dev/net/tun
+        # dns:
+        #     - 1.1.1.1
+        #     - 1.0.0.1
+        volumes:
+            - ./config/:/config/
+            # - /lib/modules:/lib/modules
+        environment: # This needs to change - your local network
+            - LOCAL_NETWORK=10.0.8.1/24
+            # Create a .env file with these values
+            # Adjust for your needs
+            - WG_TUNNEL_HOSTS=*.openai.com
+        ports:
+            - 44081:80
+            - 8080:8080
+        restart: always
+

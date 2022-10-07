@@ -5,15 +5,23 @@ if [ -z ${LOCAL_NETWORK} ]; then
     exit 1
 fi
 
-sleep 10
+sleep 5
 
 export TEMP_DIR="$(mktemp -d)"
 
 envsubst </app/privoxy/config >"${TEMP_DIR}/config"
 
+DROUTE=$(ip route | grep default | awk '{print $3}')
+HOMENET=192.168.0.0/16
+HOMENET2=10.0.0.0/8
+HOMENET3=172.16.0.0/12
+ip route add $HOMENET3 via $DROUTE
+ip route add $HOMENET2 via $DROUTE
+ip route add $HOMENET via $DROUTE
 # so return traffic that went through VPN works
-gw=$(ip route | awk '/default/ {print $3}')
-ip route add to ${LOCAL_NETWORK} via $gw dev eth0
+# gw=$(ip route | awk '/default/ {print $3}')
+# echo $gw
+# ip route add to ${LOCAL_NETWORK} via $gw dev eth0
 
 # start
 privoxy --no-daemon "${TEMP_DIR}/config"
