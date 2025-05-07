@@ -6,4 +6,4 @@ debug  1024 # Log the destination for requests Privoxy didn't let through, and t
 debug    64 # debug regular expression filters
 
 
-deny-access  ${WG_PROXY_PERMIT}
+permit-access  ${WG_PROXY_PERMIT}
