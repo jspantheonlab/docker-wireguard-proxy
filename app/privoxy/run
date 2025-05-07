@@ -9,7 +9,7 @@ sleep 5
 
 export TEMP_DIR="$(mktemp -d)"
 
-envsubst </app/privoxy/config >"${TEMP_DIR}/config"
+
 
 DROUTE=$(ip route | grep default | awk '{print $3}')
 HOMENET=192.168.0.0/16
@@ -18,6 +18,16 @@ HOMENET3=172.16.0.0/12
 ip route add $HOMENET3 via $DROUTE
 ip route add $HOMENET2 via $DROUTE
 ip route add $HOMENET via $DROUTE
+
+echo "Adding routes to $HOMENET, $HOMENET2, $HOMENET3 via $DROUTE"
+
+# add local ip to env SELF_IP
+SELF_IP=$(ip addr show dev eth0 | grep -w inet | awk '{print $2}' | cut -d/ -f1)
+echo "SELF_IP: $SELF_IP"
+export SELF_IP
+
+envsubst </app/privoxy/config >"${TEMP_DIR}/config"
+
 # so return traffic that went through VPN works
 # gw=$(ip route | awk '/default/ {print $3}')
 # echo $gw

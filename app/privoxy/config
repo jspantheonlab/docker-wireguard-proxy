@@ -4,3 +4,6 @@ debug   1    # show each GET/POST/CONNECT request
 debug   4096 # Startup banner and warnings
 debug  1024 # Log the destination for requests Privoxy didn't let through, and the reason why.
 debug    64 # debug regular expression filters
+
+
+deny-access  ${SELF_IP}/24
