@@ -1,12 +1,12 @@
-FROM alpine:3.16.2
+FROM alpine:3.21
 
 RUN apk --no-cache add \
+    curl \
     gettext \
     nginx \
-    wireguard-tools \ 
     privoxy \
-    curl \
-    runit
+    runit \
+    wireguard-tools
 
 COPY app /app
 
