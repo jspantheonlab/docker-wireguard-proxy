@@ -36,7 +36,7 @@ Pass values for `docker-compose` in `environment` or to `docker run` with `-e "<
 |---|---|---|---|---|
 | `LOCAL_NETWORK` | Yes | _none_ | `10.0.8.0/24` | Your local network's address. Required so return packets can reach you. |
 | `WG_CONFIG` | Yes | `/config/` | `/my/wireguard/config/` | Path to config folder inside container |
-| `WG_TUNNEL_HOSTS` | No | _none_ | `*.corp.com,*.corp.io` | Patterns of which hosts to tunnel, comma separated. Unset means everything is tunneled. See [Split Tunneling](#split-tunneling) |
+| `WG_TUNNEL_HOSTS` | No | _none_ | `*.corp.com,*.corp.io` | Patterns of which hosts to tunnel, comma separated. Unset means nothing is tunneled (everything goes direct). See [Split Tunneling](#split-tunneling) |
 | `WG_HOST` | No | `localhost` | `10.0.8.1` | Set this if this container runs on a different host to where you'll use it. |
 | `WG_PROXY_PORT` | No | `8080` | `1234` | Change proxy listening port. This must match the host port so that the auto-config file is correct. |
 
@@ -70,7 +70,7 @@ Host *.corp.com
 
 An HTTP proxy server operates at the application layer and not on IP addresses so proxy configuration can be used to send traffic based on hostname patterns instead of IP address ranges.
 
-The way this works is with a [Proxy auto-configuration script](https://developer.mozilla.org/en-US/docs/Web/HTTP/Proxy_servers_and_tunneling/Proxy_Auto-Configuration_(PAC)_file). The built-in script will split traffic based on the value of the `WG_TUNNEL_HOSTS` variable. The patterns used are [glob](https://en.wikipedia.org/wiki/Glob_(programming)) however you should stick with just `*` and `?` for maximum compatibility.
+The way this works is with a [Proxy auto-configuration script](https://developer.mozilla.org/en-US/docs/Web/HTTP/Proxy_servers_and_tunneling/Proxy_Auto-Configuration_(PAC)_file). The built-in script will split traffic based on the value of the `WG_TUNNEL_HOSTS` variable. The patterns used are [glob](https://en.wikipedia.org/wiki/Glob_(programming)) however you should stick with just `*` and `?` for maximum compatibility. A pattern of `*.example.com` also matches the apex domain `example.com`, so one entry is enough to cover both.
 
 When your browser or other application wants to make a request to a given host, it will first check this script to decide whether to send the request through the proxy. Most apps/operating systems support this, see [Configure your apps](#configure-your-apps).
 

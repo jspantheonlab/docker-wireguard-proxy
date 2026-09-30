@@ -16,7 +16,7 @@ services:
       - LOCAL_NETWORK=10.0.8.3/24
       # Create a .env file with these values
       # Adjust for your needs
-      - WG_TUNNEL_HOSTS=*.chatgpt.com,*.openai.com,chatgpt.com
+      - WG_TUNNEL_HOSTS=*.chatgpt.com,*.openai.com,*.oaistatic.com,*.oaiusercontent.com
     ports:
       - 44081:80
       - 8080:8080
