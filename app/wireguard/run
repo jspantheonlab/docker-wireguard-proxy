@@ -9,25 +9,30 @@ if [ ! -f "${ifpath}" ] ; then
     exit 1
 fi
 
-function cleanup()
+cleanup()
 {
     echo "stopping wg interface..."
-    wg-quick down ${wgConfigPath} || true
+    wg-quick down "${ifpath}" || true
 }
 trap cleanup INT HUP SIGINT
 
-oldip=$(curl -s ifconfig.me)
+get_ip()
+{
+    curl -4 -s --max-time 10 --retry 2 https://ifconfig.me 2>/dev/null ||
+        curl -4 -s --max-time 10 https://api.ipify.org 2>/dev/null
+}
+
+oldip=$(get_ip)
 
 echo "starting wg interface..."
 sysctl -w net.ipv4.ip_forward=1 && sysctl -w net.ipv4.conf.all.forwarding=1
 wg-quick up ${ifpath}
 wg show
 
-echo "Regular IP: ${oldip}"
+echo "Regular IP: ${oldip:-<unavailable>}"
 
-newip=$(curl -s ifconfig.me) 
-echo "Wireguard IP: ${newip}"
+newip=$(get_ip)
+echo "Wireguard IP: ${newip:-<unavailable>}"
 
 sleep infinity &
 wait
-

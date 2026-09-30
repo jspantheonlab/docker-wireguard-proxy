@@ -26,7 +26,22 @@ Pass mounts for `docker-compose` in `volumes` or to `docker run` with `-v "<host
 
 | What | Host path | Container path |
 |---|---|---|
-| Wireguard config file | Path to your config file | `/config/` (or the value of `WG_CONFIG`) |
+| VPN config file(s) | Path to your config file | `/config/` (or the value of `WG_CONFIG`) |
+
+The config folder holds either a WireGuard `*.conf` or an OpenVPN `*.ovpn` (plus any `ca.crt`/`ta.key` it references). Pick which one is used with `VPN_TYPE`.
+
+### Choosing a VPN
+
+Set `VPN_TYPE` to `wireguard` (default) or `openvpn`. Only the selected service is started; the other one is disabled.
+
+```yaml
+environment:
+  - VPN_TYPE=openvpn
+```
+
+For `wireguard`, put `wg0.conf` style files in the config folder. For `openvpn`, put `client.ovpn` there - `--cd` is set to that folder, so relative `ca`/`cert`/`key`/`tls-auth` paths inside the file resolve correctly. OpenVPN always runs with `--redirect-gateway def1` so all container traffic uses the tunnel (the PAC/proxy still does the per-host split).
+
+If the `.ovpn` contains a bare `auth-user-pass` line (username/password login), put the credentials in `<config_folder>/auth.txt` - username on the first line, password on the second. The container exits with an error if that file is missing, rather than hanging on an interactive prompt.
 
 ### Environment Variables
 
@@ -39,6 +54,7 @@ Pass values for `docker-compose` in `environment` or to `docker run` with `-e "<
 | `WG_TUNNEL_HOSTS` | No | _none_ | `*.corp.com,*.corp.io` | Patterns of which hosts to tunnel, comma separated. Unset means nothing is tunneled (everything goes direct). See [Split Tunneling](#split-tunneling) |
 | `WG_HOST` | No | `localhost` | `10.0.8.1` | Set this if this container runs on a different host to where you'll use it. |
 | `WG_PROXY_PORT` | No | `8080` | `1234` | Change proxy listening port. This must match the host port so that the auto-config file is correct. |
+| `VPN_TYPE` | No | `wireguard` | `openvpn` | Which VPN to connect with. See [Choosing a VPN](#choosing-a-vpn). |
 
 ### Ports
 

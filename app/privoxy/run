@@ -1,37 +1,75 @@
 #!/bin/sh
 
-if [ -z ${LOCAL_NETWORK} ]; then
+if [ -z "${LOCAL_NETWORK}" ]; then
     echo "Please set LOCAL_NETWORK environment variable."
     exit 1
 fi
 
-sleep 5
+DEV="${DEFAULT_DEV:-}"
+GW="${DEFAULT_GW:-}"
 
-export TEMP_DIR="$(mktemp -d)"
+if [ -z "$DEV" ]; then
+    n=0
+    LINE=
+    while [ "$n" -lt 30 ]; do
+        LINE=$(ip route show default 2>/dev/null | awk '{
+            dev = ""
+            for (i = 1; i < NF; i++) if ($i == "dev") dev = $(i + 1)
+            if (dev !~ /^(tun|tap|wg|ppp|vpn)/) { print; exit }
+        }')
+        if [ -n "$LINE" ]; then
+            DEV=$(echo "$LINE" | awk '{for (i=1;i<NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+            GW=$(echo "$LINE" | awk '{for (i=1;i<NF;i++) if ($i=="via") {print $(i+1); exit}}')
+            break
+        fi
+        n=$((n + 1))
+        sleep 1
+    done
+fi
 
+echo "Default route: dev ${DEV:-<none>} via ${GW:-<none>}"
 
-
-DROUTE=$(ip route | grep default | awk '{print $3}')
 HOMENET=192.168.0.0/16
 HOMENET2=10.0.0.0/8
 HOMENET3=172.16.0.0/12
-ip route add $HOMENET3 via $DROUTE
-ip route add $HOMENET2 via $DROUTE
-ip route add $HOMENET via $DROUTE
 
-echo "Adding routes to $HOMENET, $HOMENET2, $HOMENET3 via $DROUTE"
+if [ -n "$DEV" ]; then
+    for NET in "$HOMENET3" "$HOMENET2" "$HOMENET"; do
+        if [ -n "$GW" ]; then
+            ip route replace "$NET" via "$GW" dev "$DEV" 2>/dev/null || true
+        else
+            ip route replace "$NET" dev "$DEV" 2>/dev/null || true
+        fi
+    done
+    echo "Adding routes to $HOMENET, $HOMENET2, $HOMENET3 via ${GW:-$DEV}"
+else
+    echo "WARNING: no default route found - return traffic to LAN clients will fail."
+fi
 
-# add local ip to env SELF_IP
-SELF_IP=$(ip addr show dev eth0 | grep -w inet | awk '{print $2}' | cut -d/ -f1)
-echo "SELF_IP: $SELF_IP"
+export TEMP_DIR="$(mktemp -d)"
+
+SELF_IP=
+if [ -n "$DEV" ]; then
+    SELF_IP=$(ip addr show dev "$DEV" 2>/dev/null | grep -w inet | awk '{print $2}' | cut -d/ -f1)
+fi
+if [ -z "$SELF_IP" ]; then
+    SELF_IP=$(ip addr show 2>/dev/null | grep -w inet | grep -v '127\.0\.0\.1' | awk '{print $2}' | cut -d/ -f1 | head -1)
+fi
+echo "SELF_IP: ${SELF_IP:-<unknown>}"
 export SELF_IP
 
-envsubst </app/privoxy/config >"${TEMP_DIR}/config"
+n=0
+while [ "$n" -lt 3 ]; do
+    if nslookup ifconfig.me >/dev/null 2>&1; then
+        echo "DNS is ready"
+        break
+    fi
+    n=$((n + 1))
+    echo "waiting for DNS (${n}/3)"
+    sleep 2
+done
 
-# so return traffic that went through VPN works
-# gw=$(ip route | awk '/default/ {print $3}')
-# echo $gw
-# ip route add to ${LOCAL_NETWORK} via $gw dev eth0
+envsubst </app/privoxy/config >"${TEMP_DIR}/config"
 
 # start
 privoxy --no-daemon "${TEMP_DIR}/config"

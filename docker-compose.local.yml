@@ -32,6 +32,8 @@ services:
       - LOCAL_NETWORK=10.0.8.1/24
       # Create a .env file with these values
       # Adjust for your needs
+      # VPN_TYPE: wireguard | openvpn
+      - VPN_TYPE=openvpn
       - WG_TUNNEL_HOSTS=*.openai.com,*.chatgpt.com,*.claude.com,*.anthropic.com,*.claude.ai,*.oaistatic.com,*.oaiusercontent.com
     ports:
       - 44081:80
