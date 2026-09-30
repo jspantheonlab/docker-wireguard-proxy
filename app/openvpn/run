@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+cfg=$(ls -1 "${WG_CONFIG}"/*.ovpn 2>/dev/null | head -1)
+
+if [ -z "${cfg}" ] || [ ! -f "${cfg}" ]; then
+    echo "No OpenVPN config (*.ovpn) in ${WG_CONFIG}. Exiting."
+    exit 1
+fi
+
+set --
+if grep -Eq '^[[:space:]]*auth-user-pass[[:space:]]*$' "${cfg}"; then
+    if [ -f "${WG_CONFIG}/auth.txt" ]; then
+        echo "using credentials from ${WG_CONFIG}/auth.txt"
+        set -- --auth-user-pass "${WG_CONFIG}/auth.txt"
+    else
+        echo "ERROR: ${cfg} uses 'auth-user-pass' but ${WG_CONFIG}/auth.txt is missing." >&2
+        echo "Create ${WG_CONFIG}/auth.txt with the username on line 1 and the password on line 2." >&2
+        exit 1
+    fi
+fi
+
+echo "starting openvpn using ${cfg}"
+exec openvpn \
+    --cd "$(dirname "${cfg}")" \
+    --config "$(basename "${cfg}")" \
+    "$@" \
+    --redirect-gateway def1
