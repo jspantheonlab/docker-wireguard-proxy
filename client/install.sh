@@ -6,6 +6,14 @@
 #     On the office network, hosts from the office PAC go through the office
 #     proxy and everything else is direct. Elsewhere, everything is direct
 #     and the office proxy is never contacted.
+#   - proxy-relay (macOS only): a loopback TCP relay, 127.0.0.1:18080 ->
+#     the office proxy, run by Apple's signed /usr/bin/python3 under
+#     launchd. Endpoint security (e.g. ESET) blocks unsigned processes that
+#     launchd starts -- gost included -- from reaching LAN addresses ("no
+#     route to host"), but allows Apple-signed binaries; so gost dials the
+#     relay on loopback and the relay performs the office hop. Skipped when
+#     the system python3 (Command Line Tools) is missing, in which case
+#     gost dials the office proxy directly as before.
 #   - proxy-auto: watcher that switches gost between those two modes
 #     (refreshing its host list from the PAC). If present, it also sets the
 #     proxy env in ~/.claude/settings.json and, on macOS, switches the
@@ -25,7 +33,8 @@
 #
 # The proxy host/port and host list come from the PAC. Overrides (env vars):
 #   PROXY_HOST, PROXY_PORT, OFFICE_NET (IP prefix that counts as "office";
-#   default: first three octets of PROXY_HOST), LISTEN, GOST_VERSION,
+#   default: first three octets of PROXY_HOST), LISTEN, RELAY (macOS
+#   loopback relay address, default 127.0.0.1:18080), GOST_VERSION,
 #   SYSTEM_PROXY=0 (leave the OS proxy settings alone)
 
 # Braces make bash read the whole script before running any of it, so
@@ -35,6 +44,7 @@ set -eu
 
 PAC_URL=${PAC_URL:-__PAC_URL__}
 LISTEN=${LISTEN:-127.0.0.1:1080}
+RELAY=${RELAY:-127.0.0.1:18080}   # macOS loopback relay for the office hop
 LOC_ON=${LOC_ON:-office local}
 LOC_OFF=${LOC_OFF:-Automatic}
 GOST_VERSION=${GOST_VERSION:-3.3.1}           # used when downloading gost
@@ -52,7 +62,8 @@ case $OS in
     AGENTS=$HOME/Library/LaunchAgents
     DOMAIN=gui/$(id -u)
     AUTO_LABEL=ai.aidol.proxy-auto
-    GOST_LABEL=ai.aidol.gost ;;
+    GOST_LABEL=ai.aidol.gost
+    RELAY_LABEL=ai.aidol.proxy-relay ;;
   Linux)
     LOGS=${XDG_STATE_HOME:-$HOME/.local/state}/proxy-auto
     UNITS=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user ;;
@@ -73,7 +84,9 @@ uninstall() {
     launchctl bootout "$DOMAIN/$AUTO_LABEL" 2>/dev/null || true
     system_proxy off
     launchctl bootout "$DOMAIN/$GOST_LABEL" 2>/dev/null || true
-    rm -f "$AGENTS/$AUTO_LABEL.plist" "$AGENTS/$GOST_LABEL.plist"
+    launchctl bootout "$DOMAIN/$RELAY_LABEL" 2>/dev/null || true
+    rm -f "$AGENTS/$AUTO_LABEL.plist" "$AGENTS/$GOST_LABEL.plist" \
+          "$AGENTS/$RELAY_LABEL.plist"
   else
     system_proxy off
     systemctl --user disable --now proxy-auto.service proxy-auto-gost.service 2>/dev/null || true
@@ -248,10 +261,91 @@ LOG="$LOGS/proxy-auto.log"
 LISTEN="$LISTEN"
 EOF
 
+# macOS: gost's office hop runs through a loopback relay (see the header)
+# when Apple's system python3 is present; otherwise it dials the office
+# proxy directly, which endpoint security may block.
+USE_RELAY=0
+if [ "$OS" = Darwin ]; then
+  if [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ]; then
+    USE_RELAY=1
+  else
+    say "No system python3 (xcode-select --install): the office proxy will be dialed directly"
+  fi
+fi
+
 # gost runs gost.yaml, which proxy-auto keeps as a copy of one of these.
+OFFICE_DIAL=$PROXY_HOST:$PROXY_PORT
+HOP_DESC="directly to $PROXY_HOST:$PROXY_PORT"
+if [ "$USE_RELAY" = 1 ]; then
+  OFFICE_DIAL=$RELAY
+  HOP_DESC="via the loopback relay at $RELAY, run by Apple's signed
+# python3 (agent $RELAY_LABEL): endpoint security such as ESET blocks
+# unsigned launchd processes like gost from dialing LAN addresses"
+  say "Writing the office-proxy relay to $CONF/relay.py"
+  cat > "$CONF/relay.py" <<'RELAY_PY'
+#!/usr/bin/python3
+# Loopback relay to the office proxy, run by launchd (proxy-relay agent).
+# gost's office chain dials this on loopback instead of the office proxy
+# directly: endpoint security (e.g. ESET) blocks unsigned processes that
+# launchd starts -- gost included -- from reaching LAN addresses, but
+# allows Apple-signed binaries, and /usr/bin/python3 is signed by Apple.
+# Usage: relay.py listen_addr target_addr   (host:port, both required)
+import socket
+import sys
+import threading
+
+
+def pipe(src, dst):
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        for sock in (src, dst):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def handle(client, target):
+    try:
+        upstream = socket.create_connection(target, timeout=10)
+    except OSError:
+        client.close()
+        return
+    threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
+    pipe(upstream, client)
+
+
+if len(sys.argv) != 3:
+    sys.exit("usage: relay.py listen_addr target_addr")
+listen = sys.argv[1].rpartition(":")
+target = sys.argv[2].rpartition(":")
+listen = (listen[0], int(listen[2]))
+target = (target[0], int(target[2]))
+
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(listen)
+server.listen(128)
+print("relay %s:%d -> %s:%d" % (listen + target), file=sys.stderr)
+while True:
+    client, _ = server.accept()
+    threading.Thread(target=handle, args=(client, target), daemon=True).start()
+RELAY_PY
+else
+  rm -f "$CONF/relay.py"
+fi
+
 cat > "$CONF/gost-office.yaml" <<EOF
 # Generated by proxy-auto install.sh. Office mode: hosts in hosts.txt go
 # through the office proxy; everything else connects directly.
+# Office hop: $HOP_DESC.
 services:
 - name: local
   addr: $LISTEN
@@ -264,7 +358,7 @@ chains:
     bypass: office-hosts
     nodes:
     - name: office-proxy
-      addr: $PROXY_HOST:$PROXY_PORT
+      addr: $OFFICE_DIAL
       connector: { type: http }
       dialer: { type: tcp }
 bypasses:
@@ -516,17 +610,52 @@ EOF
 </dict>
 </plist>
 EOF
-  # Restart both so an update picks up new config. Pick the mode while gost
+  # Restart all so an update picks up new config. Pick the mode while gost
   # is stopped, so it starts once in the right mode (launchd delays a quick
   # second restart by ~10s).
   launchctl bootout "$DOMAIN/$GOST_LABEL" 2>/dev/null || true
   launchctl bootout "$DOMAIN/$AUTO_LABEL" 2>/dev/null || true
+  launchctl bootout "$DOMAIN/$RELAY_LABEL" 2>/dev/null || true
+  if [ "$USE_RELAY" = 1 ]; then
+    cat > "$AGENTS/$RELAY_LABEL.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$RELAY_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>$CONF/relay.py</string>
+    <string>$RELAY</string>
+    <string>$PROXY_HOST:$PROXY_PORT</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>$LOGS/proxy-relay.log</string>
+</dict>
+</plist>
+EOF
+  else
+    rm -f "$AGENTS/$RELAY_LABEL.plist"
+  fi
   # While proxy-auto is stopped, so it can't switch locations underneath us.
   system_proxy on
   "$BIN/proxy-auto" || true
+  # Relay before gost: in office mode gost dials it on loopback.
+  if [ "$USE_RELAY" = 1 ]; then
+    launchctl bootstrap "$DOMAIN" "$AGENTS/$RELAY_LABEL.plist"
+  fi
   launchctl bootstrap "$DOMAIN" "$AGENTS/$GOST_LABEL.plist"
   launchctl bootstrap "$DOMAIN" "$AGENTS/$AUTO_LABEL.plist"
   LOG_HINT="$LOGS/proxy-auto.log, $LOGS/gost.log"
+  if [ "$USE_RELAY" = 1 ]; then
+    LOG_HINT="$LOG_HINT, $LOGS/proxy-relay.log"
+  fi
 else
   mkdir -p "$UNITS"
   cat > "$UNITS/proxy-auto-gost.service" <<EOF
