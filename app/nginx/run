@@ -3,8 +3,10 @@
 export TEMP_DIR="$(mktemp -d)"
 chown nginx:nginx "${TEMP_DIR}"
 
-envsubst </app/nginx/config >"${TEMP_DIR}/config"
+# Only TEMP_DIR: the config also uses nginx's own $variables.
+envsubst '${TEMP_DIR}' </app/nginx/config >"${TEMP_DIR}/config"
 envsubst </app/nginx/proxy.pac >"${TEMP_DIR}/proxy.pac"
+cp /client/install.sh /client/install.ps1 "${TEMP_DIR}/"
 
 mkdir -p /run/nginx
 nginx -g 'daemon off;' -c "${TEMP_DIR}/config"
