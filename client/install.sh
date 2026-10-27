@@ -110,10 +110,12 @@ esac
 PAC=$(curl -fsS -m 10 --noproxy '*' "$PAC_URL") ||
   die "Can't fetch $PAC_URL. Run this on the office network."
 # PAC line: var PROXY = "PROXY host:port";
-PROXY_HOST=${PROXY_HOST:-$(printf '%s\n' "$PAC" | sed -n 's/.*"PROXY \([^:"]*\):[0-9]*".*/\1/p' | head -1)}
-PROXY_PORT=${PROXY_PORT:-$(printf '%s\n' "$PAC" | sed -n 's/.*"PROXY [^:"]*:\([0-9]*\)".*/\1/p' | head -1)}
-[ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ] ||
-  die "Couldn't find 'PROXY host:port' in $PAC_URL; set PROXY_HOST and PROXY_PORT."
+# PAC_PROXY is what the office PAC names; proxy-auto checks for it to tell
+# the real office network from a lookalike.
+PAC_PROXY=$(printf '%s\n' "$PAC" | sed -n 's/.*"PROXY \([^:"]*:[0-9]*\)".*/\1/p' | head -1)
+[ -n "$PAC_PROXY" ] || die "Couldn't find 'PROXY host:port' in $PAC_URL"
+PROXY_HOST=${PROXY_HOST:-${PAC_PROXY%:*}}
+PROXY_PORT=${PROXY_PORT:-${PAC_PROXY##*:}}
 OFFICE_NET=${OFFICE_NET:-${PROXY_HOST%.*}.}
 say "Office proxy: $PROXY_HOST:$PROXY_PORT (office network: $OFFICE_NET*)"
 
@@ -143,6 +145,7 @@ say "Writing config to $CONF"
 cat > "$CONF/config" <<EOF
 PROXY_HOST="$PROXY_HOST"
 PROXY_PORT="$PROXY_PORT"
+PAC_PROXY="$PAC_PROXY"
 PAC_URL="$PAC_URL"
 OFFICE_NET="$OFFICE_NET"
 LOC_ON="$LOC_ON"
@@ -195,7 +198,8 @@ cat > "$BIN/proxy-auto" <<'SCRIPT'
 #!/bin/bash
 # Toggle the office AI proxy setup (macOS + Linux). Installed by
 # proxy-auto install.sh.
-# On when this machine's IP starts with $OFFICE_NET AND the proxy is reachable:
+# On (office) when this machine's IP starts with $OFFICE_NET, the PAC at
+# $PAC_URL names $PAC_PROXY, AND the proxy port is reachable:
 #   - gost: switch between office mode (PAC hosts via the office proxy) and
 #     direct mode; refresh its hosts from the PAC
 #   - Claude Code: add/remove proxy env in ~/.claude/settings.json (if present)
@@ -244,6 +248,19 @@ local_ip() {
   fi
 }
 
+# Only the office PAC server serves a PAC naming our proxy; a lookalike
+# network on the same subnet (e.g. a home router) won't. A few tries, since
+# this can run while a new network is still coming up.
+office_pac() {
+  local i
+  for i in 1 2 3; do
+    curl -fsS -m 3 --noproxy '*' "$PAC_URL" 2>/dev/null |
+      grep -qF "\"PROXY $PAC_PROXY\"" && return 0
+    [ $i = 3 ] || sleep 1
+  done
+  return 1
+}
+
 reachable() {
   if [ "$OS" = Darwin ]; then
     nc -z -G 1 "$PROXY_HOST" "$PROXY_PORT" 2>/dev/null
@@ -262,7 +279,7 @@ proxy_wanted() {
     sleep 1
   done
   [ -z "$ip" ] && return 2
-  case $ip in "$OFFICE_NET"*) reachable ;; *) return 1 ;; esac
+  case $ip in "$OFFICE_NET"*) office_pac && reachable ;; *) return 1 ;; esac
 }
 
 set_system() {  # $1 = on|off (macOS only)
@@ -396,6 +413,9 @@ EOF
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <!-- Also re-check every 5 min, in case a check failed mid network change. -->
+  <key>StartInterval</key>
+  <integer>300</integer>
   <key>ThrottleInterval</key>
   <integer>5</integer>
 </dict>

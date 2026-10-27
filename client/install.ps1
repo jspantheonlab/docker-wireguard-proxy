@@ -77,10 +77,12 @@ try {
 } catch {
     throw "Can't fetch $PacUrl. Run this on the office network."
 }
-# PAC line: var PROXY = "PROXY host:port";
+# PAC line: var PROXY = "PROXY host:port". PacProxy is what the office PAC
+# names; the watcher checks for it to tell the real office from a lookalike.
 if ($pac -notmatch '"PROXY ([^:"]+):(\d+)"') {
-    throw "Couldn't find 'PROXY host:port' in $PacUrl; set PROXY_HOST and PROXY_PORT."
+    throw "Couldn't find 'PROXY host:port' in $PacUrl"
 }
+$PacProxy  = "$($Matches[1]):$($Matches[2])"
 $ProxyHost = Get-Setting PROXY_HOST $Matches[1]
 $ProxyPort = Get-Setting PROXY_PORT $Matches[2]
 $OfficeNet = Get-Setting OFFICE_NET ($ProxyHost -replace '\d+$', '')
@@ -111,6 +113,7 @@ $config = [ordered]@{
     ProxyHost = $ProxyHost
     ProxyPort = [int]$ProxyPort
     PacUrl    = $PacUrl
+    PacProxy  = $PacProxy
     OfficeNet = $OfficeNet
 }
 Write-Utf8 (Join-Path $Dir 'config.json') ($config | ConvertTo-Json)
@@ -164,7 +167,8 @@ Say "Installing $Watcher"
 Write-Utf8 $Watcher @'
 # Toggle the office AI proxy setup (Windows). Installed by proxy-auto
 # install.ps1 and started at logon.
-# On when this machine's IP starts with OfficeNet AND the proxy is reachable:
+# On (office) when this machine's IP starts with OfficeNet, the PAC at PacUrl
+# names PacProxy, AND the proxy port is reachable:
 #   - gost: switch between office mode (PAC hosts via the office proxy) and
 #     direct mode; refresh its hosts from the PAC. gost is kept running.
 #   - Claude Code: add/remove proxy env in ~/.claude/settings.json (if present)
@@ -187,19 +191,33 @@ function Log($msg) {
     Add-Content $Log ('{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $msg)
 }
 
-# PAC HOST_PATTERNS_STR -> one gost matcher per line ("*.x" -> ".x", which
-# gost treats as x and all its subdomains, same as the PAC).
-function Update-Hosts {
-    # Fetch directly (no system proxy); works on Windows PowerShell 5.1 and 7.
-    $pac = ''
+# Fetch the PAC directly (no system proxy); '' on failure.
+# Works on Windows PowerShell 5.1 and 7.
+function Get-Pac {
     try {
         $req = [Net.WebRequest]::Create($Cfg.PacUrl)
         $req.Proxy = $null
-        $req.Timeout = 5000
+        $req.Timeout = 3000
         $resp = $req.GetResponse()
-        try { $pac = (New-Object IO.StreamReader $resp.GetResponseStream()).ReadToEnd() }
+        try { return (New-Object IO.StreamReader $resp.GetResponseStream()).ReadToEnd() }
         finally { $resp.Close() }
-    } catch { }
+    } catch { return '' }
+}
+
+# Only the office PAC server serves a PAC naming our proxy; a lookalike
+# network on the same subnet (e.g. a home router) won't.
+function Test-OfficePac {
+    for ($i = 1; $i -le 3; $i++) {
+        if ((Get-Pac).Contains("`"PROXY $($Cfg.PacProxy)`"")) { return $true }
+        if ($i -lt 3) { Start-Sleep 1 }
+    }
+    return $false
+}
+
+# PAC HOST_PATTERNS_STR -> one gost matcher per line ("*.x" -> ".x", which
+# gost treats as x and all its subdomains, same as the PAC).
+function Update-Hosts {
+    $pac = Get-Pac
     if ($pac -notmatch 'HOST_PATTERNS_STR\s*=\s*"([^"]*)"') {
         Log "hosts: could not read $($Cfg.PacUrl), keeping current list"
         return $false
@@ -302,7 +320,7 @@ function Invoke-Check {
         if (-not (Get-Gost)) { Start-Gost }
         return
     }
-    $on = $ip.StartsWith($Cfg.OfficeNet) -and (Test-Proxy)
+    $on = $ip.StartsWith($Cfg.OfficeNet) -and (Test-OfficePac) -and (Test-Proxy)
     Set-Claude $on
     Set-Gost $on
 }
