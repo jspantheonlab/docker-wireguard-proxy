@@ -10,7 +10,18 @@ http {
     server {
         listen                  80;
         root                    ${TEMP_DIR};
-        index                   proxy.pac;
-        rewrite                 ^.*$ /proxy.pac;
+
+        # Client installers (see client/). The PAC URL the client used to
+        # reach this server is filled in, so they need no other config.
+        location ~ ^/(install\.sh|install\.ps1)$ {
+            default_type        text/plain;
+            sub_filter          '__PAC_URL__' '$scheme://$http_host/proxy.pac';
+            sub_filter_types    *;
+            sub_filter_once     off;
+        }
+
+        location / {
+            rewrite             ^ /proxy.pac break;
+        }
     }
 }

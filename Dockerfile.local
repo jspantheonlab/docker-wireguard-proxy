@@ -11,6 +11,7 @@ RUN apk --no-cache add \
     wireguard-tools
 
 COPY app /app
+COPY client /client
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
