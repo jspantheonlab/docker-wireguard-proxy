@@ -9,6 +9,9 @@
 #     gost between those two modes (refreshing its host list from the PAC)
 #     and keeps it running. It also sets the proxy env in
 #     ~/.claude/settings.json on the office network if that file exists.
+#   - System proxy: points the per-user Windows proxy settings (what Edge,
+#     Chrome and most apps use) at gost, so browser traffic is split too.
+#     Uninstall turns it off again if it still points at gost.
 #
 # Served by the proxy container's nginx, which fills in the PAC URL. Usage (PowerShell):
 #   & ([scriptblock]::Create((irm http://<server>:<pac port>/install.ps1)))              install or update
@@ -18,7 +21,8 @@
 #
 # The proxy host/port and host list come from the PAC. Overrides (env vars):
 #   PROXY_HOST, PROXY_PORT, OFFICE_NET (IP prefix that counts as "office";
-#   default: first three octets of PROXY_HOST), LISTEN, GOST_VERSION
+#   default: first three octets of PROXY_HOST), LISTEN, GOST_VERSION,
+#   SYSTEM_PROXY=0 (leave the Windows proxy settings alone)
 
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
@@ -32,6 +36,7 @@ function Get-Setting($name, $default) {
 $PacUrl      = Get-Setting PAC_URL '__PAC_URL__'
 $Listen      = Get-Setting LISTEN '127.0.0.1:1080'
 $GostVersion = Get-Setting GOST_VERSION '3.3.1'
+$SystemProxy = (Get-Setting SYSTEM_PROXY '1') -eq '1'
 
 $Dir      = Join-Path $env:LOCALAPPDATA 'proxy-auto'
 $Watcher  = Join-Path $Dir 'proxy-auto.ps1'
@@ -42,6 +47,43 @@ function Say($msg) { Write-Host "==> $msg" }
 
 function Write-Utf8($path, $text) {
     [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $false))
+}
+
+$InetKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+# Kept off the system proxy: loopback, link-local and private networks
+# (which includes the office proxy and PAC server).
+$Bypass = (@('localhost', '127.*', '10.*', '192.168.*', '169.254.*') +
+    (16..31 | ForEach-Object { "172.$_.*" }) + '<local>') -join ';'
+
+# Tell WinINet users (Edge, Chrome, ...) to re-read the proxy settings.
+function Update-InternetSettings {
+    if (-not ('ProxyAuto.WinInet' -as [type])) {
+        Add-Type -Namespace ProxyAuto -Name WinInet -MemberDefinition @'
+[DllImport("wininet.dll", SetLastError = true)]
+public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
+'@
+    }
+    [ProxyAuto.WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null  # SETTINGS_CHANGED
+    [ProxyAuto.WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null  # REFRESH
+}
+
+function Set-SystemProxy($on, $listen) {
+    if (-not $SystemProxy) { return }
+    $cur = Get-ItemProperty $InetKey -ErrorAction SilentlyContinue
+    if ($on) {
+        Say 'Pointing the Windows proxy settings at gost'
+        Set-ItemProperty $InetKey ProxyServer $listen
+        Set-ItemProperty $InetKey ProxyOverride $Bypass
+        Set-ItemProperty $InetKey ProxyEnable 1 -Type DWord
+        if ($cur.AutoConfigURL) {
+            Say "Note: a PAC script ($($cur.AutoConfigURL)) is also set and takes precedence in some apps."
+        }
+    } elseif ($cur.ProxyEnable -eq 1 -and $cur.ProxyServer -eq $listen) {
+        Set-ItemProperty $InetKey ProxyEnable 0 -Type DWord
+    } else {
+        return
+    }
+    Update-InternetSettings
 }
 
 function Stop-ProxyAuto {
@@ -55,6 +97,10 @@ function Stop-ProxyAuto {
 }
 
 if ($Uninstall) {
+    # System proxy off before gost goes away, so browsing never points at a dead proxy.
+    $cfgFile = Join-Path $Dir 'config.json'
+    $oldListen = if (Test-Path $cfgFile) { (Get-Content $cfgFile -Raw | ConvertFrom-Json).Listen } else { $null }
+    Set-SystemProxy $false $(if ($oldListen) { $oldListen } else { $Listen })
     Stop-ProxyAuto
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item $Shortcut -Force -ErrorAction SilentlyContinue
@@ -114,6 +160,7 @@ $config = [ordered]@{
     ProxyPort = [int]$ProxyPort
     PacUrl    = $PacUrl
     PacProxy  = $PacProxy
+    Listen    = $Listen
     OfficeNet = $OfficeNet
 }
 Write-Utf8 (Join-Path $Dir 'config.json') ($config | ConvertTo-Json)
@@ -362,6 +409,8 @@ try {
     Start-Process powershell.exe -ArgumentList $psArgs -WindowStyle Hidden
 }
 
+Set-SystemProxy $true $Listen
+
 Start-Sleep 4
 $running = Get-Process gost -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $GostExe }
 $office = [IO.File]::ReadAllText((Join-Path $Dir 'gost.yaml')) -ceq [IO.File]::ReadAllText((Join-Path $Dir 'gost-office.yaml'))
@@ -372,5 +421,5 @@ if (-not $running) {
 } else {
     Say "Done. gost is running on $Listen in direct mode (not on the office network)."
 }
-Write-Host "    Use http://$Listen or socks5h://$Listen in your apps."
+Write-Host "    Apps that ignore the system proxy: use http://$Listen or socks5h://$Listen."
 Write-Host "    Logs: $Dir\proxy-auto.log, $Dir\gost.log"

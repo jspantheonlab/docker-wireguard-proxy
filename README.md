@@ -80,14 +80,15 @@ For CLI tools and apps that can't use a PAC, the server also hands out an instal
 | macOS / Linux | `curl -fsSL http://<server>:<port>/install.sh \| bash` | `curl -fsSL http://<server>:<port>/install.sh \| bash -s uninstall` |
 | Windows (PowerShell) | `& ([scriptblock]::Create((irm http://<server>:<port>/install.ps1)))` | same, followed by ` -Uninstall` |
 
-No admin rights are needed. Then point apps at `http://127.0.0.1:1080` or `socks5h://127.0.0.1:1080`. Use `socks5h`, so hostnames reach the proxy.
+The installer also points the system proxy settings at gost, so browsers and most apps are split without further setup. On macOS this asks for your password once. Elsewhere no admin rights are needed. For apps that ignore the system proxy, use `http://127.0.0.1:1080` or `socks5h://127.0.0.1:1080`. Use `socks5h`, so hostnames reach the proxy.
 
 - **macOS**: a launchd agent reacts to network changes (and re-checks every 5 minutes) and switches modes. It also switches to an "office local" network location if one exists.
 - **Linux**: a systemd user service checks every 15s and switches modes. On headless machines, run `sudo loginctl enable-linger $USER` first.
 - **Windows**: a logon task (or a Startup-folder shortcut) checks every 15s, switches modes, and keeps gost running.
+- System proxy: on macOS, HTTP and HTTPS proxy on every network service in every network location. On Linux, GNOME's proxy settings, if available; otherwise set your browser's proxy manually. On Windows, the per-user internet settings used by Edge and Chrome. Local and private addresses are left direct. Uninstall turns the proxy off wherever it still points at gost. Set `SYSTEM_PROXY=0` to skip this.
 - If `~/.claude/settings.json` exists, Claude Code's proxy env is set on the office network and removed elsewhere. This needs `jq` on macOS/Linux.
 
-"Office network" means three things are true: the machine's IP shares the first three octets with `WG_HOST`, this server's PAC is reachable and names the same proxy as at install time, and the proxy port answers. Checking the PAC rules out lookalike networks, such as a home router that also uses `192.168.50.x`. You can override this, and the other settings, with env vars: `OFFICE_NET`, `PROXY_HOST`, `PROXY_PORT`, `LISTEN`, `GOST_VERSION`. The scripts live in `client/`; nginx fills in the PAC URL when serving them.
+"Office network" means three things are true: the machine's IP shares the first three octets with `WG_HOST`, this server's PAC is reachable and names the same proxy as at install time, and the proxy port answers. Checking the PAC rules out lookalike networks, such as a home router that also uses `192.168.50.x`. You can override this, and the other settings, with env vars: `OFFICE_NET`, `PROXY_HOST`, `PROXY_PORT`, `LISTEN`, `GOST_VERSION`, `SYSTEM_PROXY`. The scripts live in `client/`; nginx fills in the PAC URL when serving them.
 
 #### SSH
 

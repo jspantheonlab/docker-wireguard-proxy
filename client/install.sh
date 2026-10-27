@@ -12,6 +12,10 @@
 #     "office local" network location.
 #     macOS: launchd agent, runs on every network change.
 #     Linux: systemd user service, checks every 15s.
+#   - System proxy: points the OS proxy settings (what browsers use) at gost,
+#     so browser traffic is split too. macOS: every network service in every
+#     location (asks for your password once). Linux: GNOME, if present.
+#     Uninstall turns it off again wherever it still points at gost.
 #
 # Served by the proxy container's nginx, which fills in PAC_URL. Usage:
 #   curl -fsSL http://<server>:<pac port>/install.sh | bash                install or update
@@ -21,7 +25,8 @@
 #
 # The proxy host/port and host list come from the PAC. Overrides (env vars):
 #   PROXY_HOST, PROXY_PORT, OFFICE_NET (IP prefix that counts as "office";
-#   default: first three octets of PROXY_HOST), LISTEN, GOST_VERSION
+#   default: first three octets of PROXY_HOST), LISTEN, GOST_VERSION,
+#   SYSTEM_PROXY=0 (leave the OS proxy settings alone)
 
 # Braces make bash read the whole script before running any of it, so
 # commands that read stdin can't swallow the rest of a piped script.
@@ -33,6 +38,10 @@ LISTEN=${LISTEN:-127.0.0.1:1080}
 LOC_ON=${LOC_ON:-office local}
 LOC_OFF=${LOC_OFF:-Automatic}
 GOST_VERSION=${GOST_VERSION:-3.3.1}           # used when downloading gost
+SYSTEM_PROXY=${SYSTEM_PROXY:-1}
+# Kept off the system proxy: loopback, link-local and private networks
+# (which includes the office proxy and PAC server).
+BYPASS=(localhost 127.0.0.1 ::1 '*.local' 169.254.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16)
 
 OS=$(uname -s)
 BIN=$HOME/.local/bin
@@ -54,11 +63,19 @@ say() { printf '==> %s\n' "$*"; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
 
 uninstall() {
+  if [ -f "$CONF/config" ]; then
+    LISTEN=$(. "$CONF/config"; echo "${LISTEN:-$LISTEN}")
+  fi
+  # System proxy off before gost goes away, so browsing never points at a
+  # dead proxy (and on macOS after proxy-auto stops, so it can't switch
+  # locations underneath us).
   if [ "$OS" = Darwin ]; then
     launchctl bootout "$DOMAIN/$AUTO_LABEL" 2>/dev/null || true
+    system_proxy off
     launchctl bootout "$DOMAIN/$GOST_LABEL" 2>/dev/null || true
     rm -f "$AGENTS/$AUTO_LABEL.plist" "$AGENTS/$GOST_LABEL.plist"
   else
+    system_proxy off
     systemctl --user disable --now proxy-auto.service proxy-auto-gost.service 2>/dev/null || true
     rm -f "$UNITS/proxy-auto.service" "$UNITS/proxy-auto-gost.service"
     systemctl --user daemon-reload 2>/dev/null || true
@@ -95,6 +112,83 @@ install_gost() {
   install -m 755 "$tmp/gost" "$BIN/gost"
   rm -rf "$tmp"
   GOST=$BIN/gost
+}
+
+# macOS proxy settings are per network service *and* per location, and
+# networksetup only edits the current location, so visit each one.
+mac_locations() { scselect 2>/dev/null | awk -F'[()]' '/^ /{print $2}'; }
+mac_current_location() { scselect 2>/dev/null | awk -F'[()]' '/^ \*/{print $2}'; }
+mac_services() { networksetup -listallnetworkservices | tail -n +2 | grep -v '^\*'; }
+
+# "host:port" a networksetup -get*proxy command reports, if enabled.
+mac_proxy_of() {
+  networksetup "$1" "$2" | awk '/^Enabled:/{e=$2} /^Server:/{s=$2} /^Port:/{p=$2}
+    END{if (e == "Yes") print s ":" p}'
+}
+
+mac_system_proxy() {  # $1 = on|off
+  local host=${LISTEN%:*} port=${LISTEN##*:} start loc svc
+  if [ "$1" = on ]; then
+    say "Pointing the system proxy at gost (needs your password)"
+  fi
+  sudo -v || { say "No sudo: skipped the system proxy. Set HTTP/HTTPS proxy to $LISTEN manually."; return 0; }
+  start=$(mac_current_location)
+  mac_locations | while IFS= read -r loc; do
+    if [ "$loc" != "$(mac_current_location)" ]; then
+      scselect "$loc" >/dev/null && sleep 1
+    fi
+    mac_services | while IFS= read -r svc; do
+      if [ "$1" = on ]; then
+        sudo networksetup -setwebproxy "$svc" "$host" "$port" &&
+        sudo networksetup -setsecurewebproxy "$svc" "$host" "$port" &&
+        sudo networksetup -setproxybypassdomains "$svc" "${BYPASS[@]}" ||
+          say "  could not set proxy on $loc / $svc"
+      else
+        if [ "$(mac_proxy_of -getwebproxy "$svc")" = "$LISTEN" ]; then
+          sudo networksetup -setwebproxystate "$svc" off || true
+        fi
+        if [ "$(mac_proxy_of -getsecurewebproxy "$svc")" = "$LISTEN" ]; then
+          sudo networksetup -setsecurewebproxystate "$svc" off || true
+        fi
+      fi
+    done
+  done
+  if [ -n "$start" ] && [ "$start" != "$(mac_current_location)" ]; then
+    scselect "$start" >/dev/null
+  fi
+}
+
+gnome_system_proxy() {  # $1 = on|off
+  local host=${LISTEN%:*} port=${LISTEN##*:} ignore b
+  if ! command -v gsettings >/dev/null ||
+     ! gsettings list-schemas 2>/dev/null | grep -qx org.gnome.system.proxy; then
+    [ "$1" = on ] && say "No GNOME proxy settings found: point your browser/desktop proxy at http://$LISTEN manually."
+    return 0
+  fi
+  if [ "$1" = on ]; then
+    say "Pointing the GNOME system proxy at gost"
+    ignore=
+    for b in "${BYPASS[@]}"; do ignore="$ignore${ignore:+, }'$b'"; done
+    gsettings set org.gnome.system.proxy.http host "$host"
+    gsettings set org.gnome.system.proxy.http port "$port"
+    gsettings set org.gnome.system.proxy.https host "$host"
+    gsettings set org.gnome.system.proxy.https port "$port"
+    gsettings set org.gnome.system.proxy ignore-hosts "[$ignore]"
+    gsettings set org.gnome.system.proxy mode manual
+  elif [ "$(gsettings get org.gnome.system.proxy mode)" = "'manual'" ] &&
+       [ "$(gsettings get org.gnome.system.proxy.http host)" = "'$host'" ] &&
+       [ "$(gsettings get org.gnome.system.proxy.http port)" = "$port" ]; then
+    gsettings set org.gnome.system.proxy mode none
+  fi
+}
+
+system_proxy() {  # $1 = on|off
+  [ "$SYSTEM_PROXY" = 1 ] || return 0
+  if [ "$OS" = Darwin ]; then
+    mac_system_proxy "$1"
+  else
+    gnome_system_proxy "$1" || true
+  fi
 }
 
 if [ "${1:-}" = uninstall ]; then
@@ -151,6 +245,7 @@ OFFICE_NET="$OFFICE_NET"
 LOC_ON="$LOC_ON"
 LOC_OFF="$LOC_OFF"
 LOG="$LOGS/proxy-auto.log"
+LISTEN="$LISTEN"
 EOF
 
 # gost runs gost.yaml, which proxy-auto keeps as a copy of one of these.
@@ -426,6 +521,8 @@ EOF
   # second restart by ~10s).
   launchctl bootout "$DOMAIN/$GOST_LABEL" 2>/dev/null || true
   launchctl bootout "$DOMAIN/$AUTO_LABEL" 2>/dev/null || true
+  # While proxy-auto is stopped, so it can't switch locations underneath us.
+  system_proxy on
   "$BIN/proxy-auto" || true
   launchctl bootstrap "$DOMAIN" "$AGENTS/$GOST_LABEL.plist"
   launchctl bootstrap "$DOMAIN" "$AGENTS/$AUTO_LABEL.plist"
@@ -460,6 +557,7 @@ EOF
   systemctl --user enable proxy-auto-gost.service proxy-auto.service >/dev/null 2>&1
   systemctl --user restart proxy-auto-gost.service
   systemctl --user restart proxy-auto.service
+  system_proxy on
   LOG_HINT="$LOGS/proxy-auto.log, journalctl --user -u proxy-auto-gost"
 fi
 
@@ -469,7 +567,7 @@ if cmp -s "$CONF/gost-office.yaml" "$CONF/gost.yaml"; then
 else
   say "Done. gost is running on $LISTEN in direct mode (not on the office network)."
 fi
-echo "    Use http://$LISTEN or socks5h://$LISTEN in your apps."
+echo "    Apps that ignore the system proxy: use http://$LISTEN or socks5h://$LISTEN."
 echo "    Logs: $LOG_HINT"
 exit 0
 }
