@@ -471,14 +471,50 @@ proxy_wanted() {
   case $ip in "$OFFICE_NET"*) office_pac && reachable ;; *) return 1 ;; esac
 }
 
+# Switching location changes SystemConfiguration, which re-runs us (launchd
+# WatchPaths). If the new location itself breaks the office check (e.g. two
+# interfaces on the office subnet), we'd switch back, get re-run, switch
+# again... forever. LAST_SWITCH ("<epoch> <location>") records our last
+# switch; HOLD (an epoch) pauses location switching until then.
+LAST_SWITCH=$CONF/location-last-switch
+HOLD=$CONF/location-hold
+SETTLE=20        # s after our own switch before judging the new location
+FLAP_WINDOW=120  # undoing a switch to $LOC_ON within this many s = flapping
+HOLD_FOR=3600    # s to stay on $LOC_OFF after flapping
+
+# Give a location we just switched to time to come up before checking it.
+settle() {
+  [ "$OS" = Darwin ] && [ -f "$LAST_SWITCH" ] || return 0
+  local t wait
+  read -r t _ < "$LAST_SWITCH"
+  wait=$(( t + SETTLE - $(date +%s) ))
+  [ "$wait" -gt 0 ] && [ "$wait" -le "$SETTLE" ] && sleep "$wait"
+  return 0
+}
+
 set_system() {  # $1 = on|off (macOS only)
   [ "$OS" = Darwin ] || return 0
   scselect 2>/dev/null | grep -qF "($LOC_ON)" || return 0
-  local want cur
-  if [ "$1" = on ]; then want=$LOC_ON; else want=$LOC_OFF; fi
+  local want cur now t to until
+  now=$(date +%s)
+  if [ -f "$HOLD" ]; then
+    read -r until < "$HOLD"
+    if [ "${until:-0}" -gt "$now" ]; then want=$LOC_OFF; else rm -f "$HOLD"; fi
+  fi
+  if [ -z "$want" ]; then
+    if [ "$1" = on ]; then want=$LOC_ON; else want=$LOC_OFF; fi
+  fi
   cur=$(scselect 2>/dev/null | awk -F'[()]' '/^ \*/{print $2}')
   [ "$cur" = "$want" ] && return 0
+  if [ "$want" = "$LOC_OFF" ] && [ "$cur" = "$LOC_ON" ] && [ -f "$LAST_SWITCH" ]; then
+    read -r t to < "$LAST_SWITCH"
+    if [ "$to" = "$LOC_ON" ] && [ $(( now - t )) -lt "$FLAP_WINDOW" ]; then
+      echo $(( now + HOLD_FOR )) > "$HOLD"
+      log "system: $LOC_ON breaks the office check; staying on $LOC_OFF for $(( HOLD_FOR / 60 ))m (rm $HOLD to retry sooner)"
+    fi
+  fi
   if scselect "$want" >/dev/null 2>&1; then
+    echo "$now $want" > "$LAST_SWITCH"
     log "system: location $cur -> $want"
   else
     log "system: FAILED to switch location to $want"
@@ -538,6 +574,7 @@ set_gost() {  # $1 = on|off
 
 check() {
   local state
+  settle
   proxy_wanted
   case $? in
     0) state=on ;;
