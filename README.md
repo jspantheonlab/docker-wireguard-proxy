@@ -120,10 +120,29 @@ The proxy logs one line per request (device IP, domain, status, bytes) and turns
 Filter by time range (today, 7, 30 or 90 days), device and domain. Domains can be shown per hostname or grouped by site (`api.openai.com` → `openai.com`). The data refreshes every minute.
 
 - **Device names**: devices are shown by IP unless you add `devices.txt` to the config folder, one `<ip> <name>` per line (`#` comments allowed). Changes show up within a minute; no restart needed. Give devices fixed DHCP leases so their IPs stay put.
-- **Real device IPs**: the proxy must see each device's own address. That works on a Linux Docker host with published ports. Docker Desktop (macOS/Windows) rewrites the source to its gateway, so all traffic looks like one device; the dashboard warns when this happens.
+- **Real device IPs**: the proxy must see each device's own address. That works on a Linux Docker host with published ports. Docker Desktop (macOS/Windows) rewrites the source to its gateway, so all traffic looks like one device; the dashboard warns when this happens. On a Synology NAS, see [below](#synology-nas).
 - **What is logged**: for HTTPS only the hostname is visible, never the URL or content. Only traffic sent to the proxy is logged, which with the PAC is just the `WG_TUNNEL_HOSTS` domains. Devices that use the proxy directly (no PAC) send it everything, so all their browsing appears.
 - **Access**: the dashboard shows who uses what, so set `STATS_PASSWORD` and/or `STATS_ALLOW`. Without either it is open to anyone who can reach the port, and the container prints a warning.
 - **Storage**: logs are in `/logs/privoxy` (rotated at `STATS_LOG_SIZE` bytes, default 10 MB, keeping `STATS_LOG_FILES` files, default 100). Dashboard data is in `/logs/stats`. Mount `/logs` to keep history across container restarts. "Data" for HTTPS is the bytes passed through the tunnel and is approximate.
+
+### Synology NAS
+
+On Synology (Container Manager), every device shows up as the container network's gateway (e.g. `192.168.144.1`). DSM renames the built-in NAT chains, so Docker's port-forwarding rule is never reached and `docker-proxy` relays every connection instead, hiding the client's address. You can confirm it: `sudo iptables -t nat -L DOCKER -n -v | grep dpt:8080` shows 0 packets, and `sudo netstat -tlnp | grep :8080` shows `docker-proxy`.
+
+Fix it by sending the proxy port to Docker's rules yourself (replace `192.168.50.200` with the NAS's IP):
+
+```sh
+sudo iptables -t nat -I DEFAULT_PREROUTING 1 -d 192.168.50.200/32 -p tcp --dport 8080 -j DOCKER
+```
+
+New connections then show their real IP. Connections already open keep the gateway address until they close. DSM resets the rule on reboot and firewall changes, so reapply it from **Control Panel → Task Scheduler**: a user-defined script run as `root`, triggered at boot-up and also scheduled every 5 minutes. The script only adds the rule when it's missing:
+
+```sh
+R="-d 192.168.50.200/32 -p tcp --dport 8080 -j DOCKER"
+iptables -t nat -C DEFAULT_PREROUTING $R 2>/dev/null || iptables -t nat -I DEFAULT_PREROUTING 1 $R
+```
+
+To undo it, run the same command with `-D` instead of `-I 1`. Setting `"userland-proxy": false` in Container Manager's `dockerd.json` does not help on DSM.
 
 ## Split Tunneling
 
