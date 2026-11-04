@@ -27,6 +27,8 @@ services:
     #     - 1.0.0.1
     volumes:
       - ./config/:/config/
+      # Request logs + /stats dashboard data (kept across restarts)
+      - ./logs/:/logs/
       # - /lib/modules:/lib/modules
     environment: # This needs to change - your local network
       - LOCAL_NETWORK=10.0.8.1/24
@@ -35,6 +37,11 @@ services:
       # VPN_TYPE: wireguard | openvpn
       - VPN_TYPE=openvpn
       - WG_TUNNEL_HOSTS=*.openai.com,*.chatgpt.com,*.claude.com,*.anthropic.com,*.claude.ai,*.oaistatic.com,*.oaiusercontent.com
+      # Timezone for the /stats dashboard (days/hours)
+      # - TZ=Asia/Shanghai
+      # Protect /stats: basic auth and/or an IP allow-list
+      # - STATS_PASSWORD=change-me
+      # - STATS_ALLOW=192.168.50.0/24
     ports:
       - 44081:80
       - 8080:8080

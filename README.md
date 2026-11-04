@@ -27,6 +27,7 @@ Pass mounts for `docker-compose` in `volumes` or to `docker run` with `-v "<host
 | What | Host path | Container path |
 |---|---|---|
 | VPN config file(s) | Path to your config file | `/config/` (or the value of `WG_CONFIG`) |
+| Request logs and stats (optional, keeps history across restarts) | e.g. `./logs/` | `/logs/` |
 
 The config folder holds either a WireGuard `*.conf` or an OpenVPN `*.ovpn` (plus any `ca.crt`/`ta.key` it references). Pick which one is used with `VPN_TYPE`.
 
@@ -55,6 +56,10 @@ Pass values for `docker-compose` in `environment` or to `docker run` with `-e "<
 | `WG_HOST` | No | `localhost` | `10.0.8.1` | Set this if this container runs on a different host to where you'll use it. |
 | `WG_PROXY_PORT` | No | `8080` | `1234` | Change proxy listening port. This must match the host port so that the auto-config file is correct. |
 | `VPN_TYPE` | No | `wireguard` | `openvpn` | Which VPN to connect with. See [Choosing a VPN](#choosing-a-vpn). |
+| `TZ` | No | `UTC` | `Asia/Shanghai` | Timezone for log times, so the dashboard's days and hours match yours. |
+| `STATS_PASSWORD` | No | _none_ | `change-me` | Password for the [usage dashboard](#usage-dashboard). User is `STATS_USER` (default `admin`). |
+| `STATS_ALLOW` | No | _none_ | `192.168.50.10,10.0.0.0/8` | Only these IPs/CIDRs may open the dashboard. |
+| `STATS_DAYS` | No | `90` | `30` | How many days of history the dashboard keeps. |
 
 ### Ports
 
@@ -101,6 +106,24 @@ Example SSH config:
 Host *.corp.com
     ProxyCommand /usr/local/bin/corkscrew localhost 8080 %h %p
 ```
+
+## Usage dashboard
+
+The proxy logs one line per request (device IP, domain, status, bytes) and turns them into a dashboard at `http://<server>:<port>/stats/`. That is the same port as the PAC, e.g. `http://192.168.50.200:44081/stats/`. It shows:
+
+- requests, active devices, domains, failed requests and data volume;
+- requests per day, or per hour for today;
+- top devices and top domains (click one to filter everything by it);
+- a device × domain heatmap;
+- sortable device and domain tables.
+
+Filter by time range (today, 7, 30 or 90 days), device and domain. Domains can be shown per hostname or grouped by site (`api.openai.com` → `openai.com`). The data refreshes every minute.
+
+- **Device names**: devices are shown by IP unless you add `devices.txt` to the config folder, one `<ip> <name>` per line (`#` comments allowed). Changes show up within a minute; no restart needed. Give devices fixed DHCP leases so their IPs stay put.
+- **Real device IPs**: the proxy must see each device's own address. That works on a Linux Docker host with published ports. Docker Desktop (macOS/Windows) rewrites the source to its gateway, so all traffic looks like one device; the dashboard warns when this happens.
+- **What is logged**: for HTTPS only the hostname is visible, never the URL or content. Only traffic sent to the proxy is logged, which with the PAC is just the `WG_TUNNEL_HOSTS` domains. Devices that use the proxy directly (no PAC) send it everything, so all their browsing appears.
+- **Access**: the dashboard shows who uses what, so set `STATS_PASSWORD` and/or `STATS_ALLOW`. Without either it is open to anyone who can reach the port, and the container prints a warning.
+- **Storage**: logs are in `/logs/privoxy` (rotated at `STATS_LOG_SIZE` bytes, default 10 MB, keeping `STATS_LOG_FILES` files, default 100). Dashboard data is in `/logs/stats`. Mount `/logs` to keep history across container restarts. "Data" for HTTPS is the bytes passed through the tunnel and is approximate.
 
 ## Split Tunneling
 

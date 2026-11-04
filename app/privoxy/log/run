@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# runit log service for privoxy: everything privoxy prints still goes to the
+# container log (stderr), and the per-request Common Log Format lines are also
+# kept in ${STATS_LOG_DIR}/privoxy for the stats dashboard (app/stats).
+
+DIR="${STATS_LOG_DIR:-/logs}/privoxy"
+mkdir -p "${DIR}"
+
+# svlogd config: rotate at STATS_LOG_SIZE bytes, keep STATS_LOG_FILES files,
+# store only CLF lines ("ip - - [date] "request" status bytes"), and echo
+# every line to stderr so `docker logs` is unchanged.
+cat >"${DIR}/config" <<CFG
+s${STATS_LOG_SIZE:-10000000}
+n${STATS_LOG_FILES:-100}
+-*
++* - - [*] "*" * *
+e*
+CFG
+
+exec svlogd "${DIR}"

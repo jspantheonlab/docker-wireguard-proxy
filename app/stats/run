@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# Rebuilds the /stats dashboard data every STATS_INTERVAL seconds.
+exec 2>&1
+
+INTERVAL="${STATS_INTERVAL:-60}"
+echo "stats: aggregating proxy logs every ${INTERVAL}s"
+while :; do
+    /app/stats/aggregate.sh || echo "stats: aggregation failed"
+    sleep "${INTERVAL}"
+done

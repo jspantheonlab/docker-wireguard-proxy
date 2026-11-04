@@ -9,6 +9,7 @@ http {
     default_type                application/javascript;
     server {
         listen                  80;
+        absolute_redirect       off;
         root                    ${TEMP_DIR};
 
         # Client installers (see client/). The PAC URL the client used to
@@ -18,6 +19,27 @@ http {
             sub_filter          '__PAC_URL__' '$scheme://$http_host/proxy.pac';
             sub_filter_types    *;
             sub_filter_once     off;
+        }
+
+        # Usage dashboard (app/stats). Access rules come from STATS_ALLOW /
+        # STATS_PASSWORD, see app/nginx/run.
+        location = /stats {
+            return              301 /stats/;
+        }
+        location ^~ /stats/data/ {
+            include             ${TEMP_DIR}/stats_access.conf;
+            alias               ${STATS_LOG_DIR}/stats/data/;
+            default_type        text/plain;
+            charset             utf-8;
+            add_header          Cache-Control "no-store";
+        }
+        location ^~ /stats/ {
+            include             ${TEMP_DIR}/stats_access.conf;
+            alias               /app/stats/www/;
+            index               index.html;
+            default_type        text/html;
+            charset             utf-8;
+            add_header          Cache-Control "no-cache";
         }
 
         location / {

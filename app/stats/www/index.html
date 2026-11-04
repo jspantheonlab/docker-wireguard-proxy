@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proxy usage</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --surface-2: #f0efec;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series-1: #2a78d6;
+    --series-1-hover: #5598e7;
+    --wash: rgba(42, 120, 214, 0.08);
+    --critical: #d03b3b;
+    --warning: #fab219;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --surface-2: #262624;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-1: #3987e5;
+      --series-1-hover: #6da7ec;
+      --wash: rgba(57, 135, 229, 0.12);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1240px; margin: 0 auto; padding: 24px 20px 48px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 12px; }
+  .muted { color: var(--text-muted); }
+  .updated { color: var(--text-muted); font-size: 12px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 16px 0 20px; }
+  .filters label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-1); }
+  .seg button {
+    border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 13px;
+    padding: 5px 12px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button:hover { background: var(--wash); }
+  .seg button[aria-pressed="true"] { color: var(--text-primary); font-weight: 600; background: var(--surface-2); }
+  select {
+    font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; max-width: 260px;
+  }
+  .clear { font: inherit; font-size: 13px; color: var(--series-1); background: none; border: 0; cursor: pointer; padding: 4px; }
+
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .tiles { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
+  .tile .label { color: var(--text-secondary); font-size: 13px; }
+  .tile .value { font-size: 28px; font-weight: 600; margin-top: 4px; }
+  .tile.hero .value { font-size: 48px; line-height: 1.1; }
+  .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .status { display: inline-flex; align-items: center; gap: 4px; }
+  .status svg { flex: none; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .full { margin-top: 12px; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart .lbl { fill: var(--text-primary); font-size: 12px; font-variant-numeric: normal; }
+  .chart .lbl2 { fill: var(--text-muted); font-size: 11px; font-variant-numeric: normal; }
+  .chart .val { fill: var(--text-secondary); font-size: 12px; }
+  .chart .gridline { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+  .chart .baseline { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+  .chart .bar { fill: var(--series-1); }
+  .chart .hit { fill: transparent; cursor: pointer; }
+  .chart .hit:hover, .chart .hit:focus { fill: var(--wash); outline: none; }
+  .chart .row:hover .bar, .chart .row:focus-within .bar, .chart .col:hover .bar { fill: var(--series-1-hover); }
+  .chart .selected .lbl { font-weight: 600; }
+  .empty { color: var(--text-muted); padding: 32px 0; text-align: center; }
+
+  .heat { overflow-x: auto; }
+  .heat table { border-collapse: separate; border-spacing: 2px; }
+  .heat th { font-weight: 400; color: var(--text-secondary); font-size: 12px; text-align: right; padding-right: 8px; white-space: nowrap; }
+  .heat thead th { text-align: left; vertical-align: bottom; height: 120px; padding: 0 0 6px; }
+  .heat thead th span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); max-height: 116px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .heat td { width: 34px; min-width: 34px; height: 26px; border-radius: 4px; cursor: default; }
+  .heat td:hover, .heat td:focus { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+  .key { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; margin-top: 10px; }
+  .key i { display: inline-block; width: 18px; height: 10px; border-radius: 2px; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tablewrap { overflow-x: auto; }
+  table.data { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.data th, table.data td { padding: 7px 10px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+  table.data th { color: var(--text-secondary); font-weight: 500; cursor: pointer; user-select: none; }
+  table.data th.num, table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data th[aria-sort]::after { content: " ▾"; color: var(--text-muted); }
+  table.data th[aria-sort="ascending"]::after { content: " ▴"; }
+  table.data tbody tr { cursor: pointer; }
+  table.data tbody tr:hover { background: var(--wash); }
+
+  .notice { border: 1px solid var(--border); border-left: 3px solid var(--warning); background: var(--surface-1); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; color: var(--text-secondary); font-size: 13px; }
+  .notice b { color: var(--text-primary); }
+  .notice code, .sub code { font-size: 12px; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    max-width: 320px;
+  }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--text-secondary); }
+  #tip .row { display: flex; align-items: center; gap: 6px; }
+  #tip .row i { display: inline-block; width: 10px; height: 2px; background: var(--series-1); border-radius: 1px; }
+
+  .loading main { opacity: 0.6; transition: opacity 0.2s; }
+
+  @media (max-width: 900px) {
+    .tiles { grid-template-columns: repeat(2, 1fr); }
+    .tile.hero { grid-column: 1 / -1; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Proxy usage</h1>
+    <span class="updated" id="updated"></span>
+  </header>
+
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="seg" id="range" role="group" aria-label="Time range">
+      <button data-v="today">Today</button>
+      <button data-v="7">7 days</button>
+      <button data-v="30">30 days</button>
+      <button data-v="90">90 days</button>
+    </div>
+    <label>Device <select id="device"></select></label>
+    <label>Domain <select id="domain"></select></label>
+    <div class="seg" id="group" role="group" aria-label="Group domains by">
+      <button data-v="host" title="Each hostname separately (api.openai.com, chatgpt.com, …)">Hostname</button>
+      <button data-v="base" title="Group subdomains under their site (openai.com, googleapis.com, …)">Site</button>
+    </div>
+    <button class="clear" id="clear" hidden>Clear filters</button>
+  </div>
+
+  <div id="notices"></div>
+
+  <section class="tiles" aria-label="Summary">
+    <div class="card tile hero"><div class="label">Requests</div><div class="value" id="t-req">–</div><div class="note" id="t-req-note"></div></div>
+    <div class="card tile"><div class="label">Devices</div><div class="value" id="t-dev">–</div><div class="note" id="t-dev-note"></div></div>
+    <div class="card tile"><div class="label">Domains</div><div class="value" id="t-dom">–</div><div class="note" id="t-dom-note"></div></div>
+    <div class="card tile"><div class="label">Failed requests</div><div class="value" id="t-fail">–</div><div class="note" id="t-fail-note"></div></div>
+    <div class="card tile"><div class="label">Data through proxy</div><div class="value" id="t-bytes">–</div><div class="note">approximate</div></div>
+  </section>
+
+  <section class="card full">
+    <h2 id="ts-title">Requests over time</h2>
+    <p class="sub" id="ts-sub"></p>
+    <div class="chart" id="ts"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Top devices</h2>
+      <p class="sub">Requests per device. Click one to filter.</p>
+      <div class="chart" id="top-dev"></div>
+    </section>
+    <section class="card">
+      <h2>Top domains</h2>
+      <p class="sub">Requests per domain, with how many devices used it. Click one to filter.</p>
+      <div class="chart" id="top-dom"></div>
+    </section>
+  </div>
+
+  <section class="card full">
+    <h2>Which devices use which domains</h2>
+    <p class="sub">Requests from the busiest devices to the busiest domains. Darker means more requests.</p>
+    <div class="heat" id="heat"></div>
+  </section>
+
+  <section class="card full">
+    <div class="tabs seg" id="tabs" role="group" aria-label="Table">
+      <button data-v="devices">Devices</button>
+      <button data-v="domains">Domains</button>
+    </div>
+    <div class="tablewrap" id="table"></div>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+"use strict";
+
+// ---------- data ----------
+const DATA = "data/";
+const state = { range: "7", device: "", domain: "", group: "base", tab: "devices", sort: { devices: ["req", -1], domains: ["req", -1] } };
+let usage = [], hourly = [], names = new Map(), meta = {};
+
+function parseTSV(text) {
+  const lines = text.split("\n").filter(Boolean);
+  const head = (lines.shift() || "").split("\t");
+  return lines.map(l => { const c = l.split("\t"); const o = {}; head.forEach((h, i) => o[h] = c[i] ?? ""); return o; });
+}
+async function fetchTSV(name) {
+  const r = await fetch(DATA + name, { cache: "no-store" });
+  if (!r.ok) return [];
+  return parseTSV(await r.text());
+}
+async function load() {
+  document.body.classList.add("loading");
+  try {
+    const [u, h, d, m] = await Promise.all(["usage.tsv", "hourly.tsv", "devices.tsv", "meta.tsv"].map(fetchTSV));
+    usage = u.map(r => ({ day: r.day, ip: r.ip, host: r.host, req: +r.requests, bytes: +r.bytes, failed: +r.failed, last: r.last_seen }));
+    hourly = h.map(r => ({ day: r.day, hour: +r.hour, ip: r.ip, host: r.host, req: +r.requests }));
+    names = new Map(d.map(r => [r.ip, r.name]));
+    meta = Object.fromEntries(m.map(r => [r.key, r.value]));
+  } catch (e) {
+    console.error(e);
+  }
+  document.body.classList.remove("loading");
+  render();
+}
+
+// ---------- helpers ----------
+const TWO_LEVEL = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "com.hk", "com.tw", "com.sg", "com.my", "com.au", "co.jp", "co.kr", "co.in", "com.br", "co.nz"]);
+function site(host) {
+  if (/^[\d.]+$/.test(host) || host.startsWith("[")) return host;
+  const p = host.split(".");
+  if (p.length <= 2) return host;
+  const last2 = p.slice(-2).join(".");
+  return TWO_LEVEL.has(last2) ? p.slice(-3).join(".") : last2;
+}
+const dom = r => state.group === "base" ? site(r.host) : r.host;
+const devName = ip => names.get(ip) || "";
+const devLabel = ip => names.get(ip) || ip;
+
+const nf = new Intl.NumberFormat();
+const cf = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+const num = n => nf.format(n);
+const compact = n => n < 10000 ? nf.format(n) : cf.format(n);
+function bytes(n) {
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + " " + u[i];
+}
+const pct = (a, b) => b ? (a / b * 100) : 0;
+function fmtPct(p) { return p === 0 ? "0%" : p < 0.1 ? "<0.1%" : p.toFixed(p < 10 ? 1 : 0) + "%"; }
+
+function addDays(day, n) {
+  const d = new Date(day + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function today() { return (meta.generated || new Date().toISOString()).slice(0, 10); }
+function rangeDays() {
+  const t = today();
+  const n = state.range === "today" ? 1 : +state.range;
+  const days = []; for (let i = n - 1; i >= 0; i--) days.push(addDays(t, -i));
+  return days;
+}
+function fmtDay(day, withWeekday) {
+  const d = new Date(day + "T00:00:00Z");
+  return d.toLocaleDateString(undefined, { timeZone: "UTC", month: "short", day: "numeric", ...(withWeekday ? { weekday: "short" } : {}) });
+}
+function ago(ts) {
+  if (!ts || !meta.generated) return ts || "";
+  const a = Date.parse(ts.replace(" ", "T") + "Z"), b = Date.parse(meta.generated.replace(" ", "T") + "Z");
+  const s = Math.max(0, (b - a) / 1000);
+  if (s < 90) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " d ago";
+}
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
+  return e;
+}
+const SVGNS = "http://www.w3.org/2000/svg";
+function s(tag, attrs, ...kids) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
+  return e;
+}
+function niceTicks(max, count) {
+  if (max <= 0) return [0, 1];
+  const raw = max / count, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(st => st >= raw);
+  const ticks = []; for (let v = 0; v <= max + step * 0.001; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  if (ticks[ticks.length - 1] < max) ticks.push(ticks[ticks.length - 1] + step);
+  return ticks.filter(v => Number.isInteger(v) || step < 1);
+}
+function truncate(text, max) { return text.length > max ? text.slice(0, max - 1) + "…" : text; }
+
+// ---------- tooltip ----------
+const tip = document.getElementById("tip");
+function showTip(evt, value, lines) {
+  tip.replaceChildren(el("div", { class: "v" }, value), ...lines.map(l => el("div", { class: "k" }, l)));
+  tip.style.display = "block";
+  let x, y;
+  if (evt.clientX != null && evt.type !== "focus") { x = evt.clientX; y = evt.clientY; }
+  else { const r = evt.target.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top; }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(window.innerWidth - w - 8, Math.max(8, x + 12)) + "px";
+  tip.style.top = (y - h - 12 < 8 ? y + 16 : y - h - 12) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+function tipHandlers(value, lines) {
+  const f = e => showTip(e, value, lines);
+  return { onpointermove: f, onfocus: f, onpointerleave: hideTip, onblur: hideTip };
+}
+
+// ---------- filtering ----------
+function filtered() {
+  const days = new Set(rangeDays());
+  return usage.filter(r => days.has(r.day) && (!state.device || r.ip === state.device));
+}
+function withDomain(rows) { return state.domain ? rows.filter(r => dom(r) === state.domain) : rows; }
+
+function sumBy(rows, keyFn) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    let a = m.get(k);
+    if (!a) m.set(k, a = { key: k, req: 0, bytes: 0, failed: 0, last: "", set: new Set(), sub: new Map() });
+    a.req += r.req; a.bytes += r.bytes; a.failed += r.failed;
+    if (r.last > a.last) a.last = r.last;
+  }
+  return m;
+}
+
+// ---------- render ----------
+function render() {
+  syncControls();
+  const base = filtered();            // range + device
+  const rows = withDomain(base);      // + domain
+
+  renderNotices();
+  renderTiles(rows);
+  renderTimeSeries();
+  renderTopDevices(withDomain(usage.filter(r => new Set(rangeDays()).has(r.day))));
+  renderTopDomains(base);
+  renderHeat(rows);
+  renderTable(rows);
+
+  document.getElementById("updated").textContent = meta.generated
+    ? `Updated ${meta.generated} (UTC${meta.tz || ""}) · refreshes every minute` : "";
+}
+
+function syncControls() {
+  for (const id of ["range", "group", "tabs"]) {
+    const v = id === "tabs" ? state.tab : state[id];
+    document.querySelectorAll(`#${id} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === v)));
+  }
+  const days = new Set(rangeDays());
+  const inRange = usage.filter(r => days.has(r.day));
+
+  const devSel = document.getElementById("device");
+  const devs = [...sumBy(inRange, r => r.ip).values()].sort((a, b) => b.req - a.req);
+  if (state.device && !devs.some(d => d.key === state.device)) devs.push({ key: state.device, req: 0 });
+  devSel.replaceChildren(el("option", { value: "" }, "All devices"),
+    ...devs.map(d => el("option", { value: d.key }, devName(d.key) ? `${devName(d.key)} (${d.key})` : d.key)));
+  devSel.value = state.device;
+
+  const domSel = document.getElementById("domain");
+  const doms = [...sumBy(inRange.filter(r => !state.device || r.ip === state.device), dom).values()].sort((a, b) => b.req - a.req);
+  if (state.domain && !doms.some(d => d.key === state.domain)) doms.push({ key: state.domain, req: 0 });
+  domSel.replaceChildren(el("option", { value: "" }, "All domains"), ...doms.map(d => el("option", { value: d.key }, d.key)));
+  domSel.value = state.domain;
+
+  document.getElementById("clear").hidden = !state.device && !state.domain;
+}
+
+function renderNotices() {
+  const box = document.getElementById("notices");
+  box.replaceChildren();
+  if (!usage.length) {
+    box.append(el("div", { class: "notice" }, el("b", {}, "No requests logged yet. "),
+      "Stats appear about a minute after the first request goes through the proxy. If this stays empty, check that the container's ",
+      el("code", {}, "/logs"), " folder is writable."));
+    return;
+  }
+  const ips = new Set(usage.map(r => r.ip));
+  // Docker Desktop / OrbStack / userland-proxy show every client as the bridge gateway (x.x.x.1).
+  const gw = ips.size <= 2 && [...ips].find(ip => /^(172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.1$/.test(ip));
+  if (gw) {
+    box.append(el("div", { class: "notice" }, el("b", {}, "All requests seem to come from one address (" + gw + "). "),
+      "That is usually Docker's gateway, which hides the real devices. This happens with Docker Desktop, or when the userland proxy handles the port. Run the container on a Linux host with published ports so the proxy sees each device's own IP."));
+  }
+  const unnamed = [...ips].filter(ip => !names.has(ip)).length;
+  if (unnamed && names.size === 0) {
+    box.append(el("div", { class: "notice" }, el("b", {}, "Devices are shown by IP. "),
+      "To show names, add a ", el("code", {}, "devices.txt"), " to the config folder, one ", el("code", {}, "<ip> <name>"), " per line."));
+  }
+}
+
+function renderTiles(rows) {
+  const req = rows.reduce((a, r) => a + r.req, 0);
+  const failed = rows.reduce((a, r) => a + r.failed, 0);
+  const b = rows.reduce((a, r) => a + r.bytes, 0);
+  const devs = new Set(rows.map(r => r.ip)), doms = new Set(rows.map(dom));
+  const nDays = rangeDays().length;
+  document.getElementById("t-req").textContent = compact(req);
+  document.getElementById("t-req-note").textContent = nDays > 1 ? `${compact(Math.round(req / nDays))} per day on average` : "since midnight";
+  document.getElementById("t-dev").textContent = num(devs.size);
+  document.getElementById("t-dev-note").textContent = state.device ? devLabel(state.device) : "sent at least one request";
+  document.getElementById("t-dom").textContent = num(doms.size);
+  document.getElementById("t-dom-note").textContent = state.group === "base" ? "grouped by site" : "distinct hostnames";
+  const p = pct(failed, req);
+  const fail = document.getElementById("t-fail");
+  fail.replaceChildren(fmtPct(p));
+  const note = document.getElementById("t-fail-note");
+  note.replaceChildren();
+  if (failed) {
+    const warn = p >= 5;
+    note.append(el("span", { class: "status" }, statusIcon(warn ? "critical" : "muted"),
+      `${num(failed)} failed${warn ? " – check the VPN" : ""}`));
+  } else note.append(req ? "none" : "–");
+  document.getElementById("t-bytes").textContent = bytes(b);
+}
+function statusIcon(kind) {
+  const color = kind === "critical" ? "var(--critical)" : "var(--text-muted)";
+  return s("svg", { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
+    s("circle", { cx: 6, cy: 6, r: 5.5, fill: color }),
+    s("rect", { x: 5.25, y: 2.5, width: 1.5, height: 4.5, rx: 0.75, fill: "#fff" }),
+    s("circle", { cx: 6, cy: 8.75, r: 0.9, fill: "#fff" }));
+}
+
+// Column chart: requests per hour (today) or per day.
+function renderTimeSeries() {
+  const box = document.getElementById("ts");
+  const hourlyMode = state.range === "today";
+  let points;
+  if (hourlyMode) {
+    const t = today();
+    const counts = new Array(24).fill(0);
+    for (const r of hourly) {
+      if (r.day !== t || (state.device && r.ip !== state.device) || (state.domain && dom(r) !== state.domain)) continue;
+      counts[r.hour] += r.req;
+    }
+    const nowHour = meta.generated ? +meta.generated.slice(11, 13) : 23;
+    points = counts.slice(0, nowHour + 1).map((v, h) => ({ v, label: String(h).padStart(2, "0") + ":00", tipLabel: `${String(h).padStart(2, "0")}:00–${String(h).padStart(2, "0")}:59` }));
+    while (points.length < 24) points.push({ v: null, label: String(points.length).padStart(2, "0") + ":00" });
+  } else {
+    const byDay = new Map();
+    for (const r of withDomain(filtered())) byDay.set(r.day, (byDay.get(r.day) || 0) + r.req);
+    points = rangeDays().map(d => ({ v: byDay.get(d) || 0, label: fmtDay(d), tipLabel: fmtDay(d, true) }));
+  }
+  document.getElementById("ts-title").textContent = hourlyMode ? "Requests per hour today" : "Requests per day";
+  const scope = [state.device && devLabel(state.device), state.domain].filter(Boolean).join(" · ");
+  document.getElementById("ts-sub").textContent = scope || "All devices and domains";
+
+  const W = box.clientWidth || 800, H = 220, m = { t: 10, r: 8, b: 26, l: 44 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const max = Math.max(0, ...points.map(p => p.v || 0));
+  const ticks = niceTicks(max, 4), top = ticks[ticks.length - 1] || 1;
+  const y = v => m.t + ih - (v / top) * ih;
+  const band = iw / points.length, bw = Math.max(2, Math.min(24, band - 2));
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": document.getElementById("ts-title").textContent });
+
+  for (const tv of ticks) {
+    svg.append(s("line", { class: tv === 0 ? "baseline" : "gridline", x1: m.l, x2: W - m.r, y1: Math.round(y(tv)) + 0.5, y2: Math.round(y(tv)) + 0.5 }));
+    svg.append(s("text", { x: m.l - 8, y: y(tv) + 4, "text-anchor": "end" }, compact(tv)));
+  }
+  const every = Math.ceil(points.length / Math.max(1, Math.floor(iw / 64)));
+  points.forEach((p, i) => {
+    const cx = m.l + band * i + band / 2;
+    if (i % every === 0) svg.append(s("text", { x: cx, y: H - 8, "text-anchor": "middle" }, p.label));
+    if (p.v == null) return;
+    const g = s("g", { class: "col" });
+    if (p.v > 0) g.append(s("path", { class: "bar", d: colPath(cx - bw / 2, y(p.v), bw, y(0) - y(p.v)) }));
+    g.append(s("rect", { class: "hit", x: m.l + band * i, y: m.t, width: band, height: ih, tabindex: 0,
+      ...tipHandlers(num(p.v) + " requests", [p.tipLabel]) }));
+    svg.append(g);
+  });
+  // label the peak only
+  if (max > 0) {
+    const i = points.findIndex(p => p.v === max), cx = m.l + band * i + band / 2;
+    svg.append(s("text", { class: "val", x: cx, y: y(max) - 6, "text-anchor": "middle" }, compact(max)));
+  }
+  box.replaceChildren(svg);
+}
+function colPath(x, yTop, w, h) {
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${yTop + h}V${yTop + r}Q${x},${yTop} ${x + r},${yTop}H${x + w - r}Q${x + w},${yTop} ${x + w},${yTop + r}V${yTop + h}Z`;
+}
+function barPath(x, y0, len, h) {
+  const r = Math.min(4, len, h / 2);
+  return `M${x},${y0}H${x + len - r}Q${x + len},${y0} ${x + len},${y0 + r}V${y0 + h - r}Q${x + len},${y0 + h} ${x + len - r},${y0 + h}H${x}Z`;
+}
+
+// Horizontal bar list, shared by top devices / top domains.
+function barList(box, items, { label, label2, tipLines, selected, onPick, empty }) {
+  if (!items.length) { box.replaceChildren(el("div", { class: "empty" }, empty)); return; }
+  const W = box.clientWidth || 500, rowH = 34, labelW = Math.min(200, Math.max(120, W * 0.36)), valW = 56;
+  const H = items.length * rowH;
+  const max = Math.max(...items.map(d => d.req));
+  const iw = W - labelW - valW;
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "list" });
+  items.forEach((d, i) => {
+    const y0 = i * rowH, bh = 14, len = Math.max(2, d.req / max * iw);
+    const g = s("g", { class: "row" + (selected === d.key ? " selected" : ""), role: "listitem" });
+    const l2 = label2(d);
+    g.append(s("text", { class: "lbl", x: 0, y: y0 + (l2 ? 14 : 21) }, truncate(label(d), Math.floor(labelW / 7.2))));
+    if (l2) g.append(s("text", { class: "lbl2", x: 0, y: y0 + 28 }, truncate(l2, Math.floor(labelW / 6.4))));
+    g.append(s("path", { class: "bar", d: barPath(labelW, y0 + (rowH - bh) / 2, len, bh) }));
+    g.append(s("text", { class: "val", x: labelW + len + 6, y: y0 + rowH / 2 + 4 }, compact(d.req)));
+    g.append(s("rect", { class: "hit", x: 0, y: y0, width: W, height: rowH, tabindex: 0, role: "button",
+      "aria-label": `${label(d)}: ${num(d.req)} requests`,
+      onclick: () => onPick(d.key), onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(d.key); } },
+      ...tipHandlers(num(d.req) + " requests", tipLines(d)) }));
+    svg.append(g);
+  });
+  box.replaceChildren(svg);
+}
+
+function renderTopDevices(rows) {
+  const m = sumBy(rows, r => r.ip);
+  for (const r of rows) m.get(r.ip).set.add(dom(r));
+  const items = [...m.values()].sort((a, b) => b.req - a.req).slice(0, 12);
+  barList(document.getElementById("top-dev"), items, {
+    label: d => devLabel(d.key),
+    label2: d => devName(d.key) ? d.key : "",
+    tipLines: d => [devLabel(d.key) + (devName(d.key) ? ` (${d.key})` : ""), `${d.set.size} domains · last seen ${ago(d.last)}`, d.failed ? `${num(d.failed)} failed` : null].filter(Boolean),
+    selected: state.device,
+    onPick: k => { state.device = state.device === k ? "" : k; render(); },
+    empty: "No devices in this range",
+  });
+}
+function renderTopDomains(rows) {
+  const m = sumBy(rows, dom);
+  for (const r of rows) m.get(dom(r)).set.add(r.ip);
+  const items = [...m.values()].sort((a, b) => b.req - a.req).slice(0, 12);
+  barList(document.getElementById("top-dom"), items, {
+    label: d => d.key,
+    label2: d => `${d.set.size} device${d.set.size === 1 ? "" : "s"}`,
+    tipLines: d => [d.key, `${d.set.size} devices · last used ${ago(d.last)}`, d.failed ? `${num(d.failed)} failed` : null].filter(Boolean),
+    selected: state.domain,
+    onPick: k => { state.domain = state.domain === k ? "" : k; render(); },
+    empty: "No domains in this range",
+  });
+}
+
+// Device x domain heatmap (sequential blue).
+const RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+function rampFor() { return matchMedia("(prefers-color-scheme: dark)").matches ? [...RAMP].reverse() : RAMP; }
+function renderHeat(rows) {
+  const box = document.getElementById("heat");
+  if (!rows.length) { box.replaceChildren(el("div", { class: "empty" }, "No requests in this range")); return; }
+  const devs = [...sumBy(rows, r => r.ip).values()].sort((a, b) => b.req - a.req).slice(0, 15).map(d => d.key);
+  const doms = [...sumBy(rows, dom).values()].sort((a, b) => b.req - a.req).slice(0, 14).map(d => d.key);
+  const cell = new Map();
+  for (const r of rows) { const k = r.ip + "\t" + dom(r); cell.set(k, (cell.get(k) || 0) + r.req); }
+  const max = Math.max(1, ...devs.flatMap(d => doms.map(o => cell.get(d + "\t" + o) || 0)));
+  const ramp = rampFor();
+  const color = v => v ? ramp[Math.min(ramp.length - 1, Math.floor(Math.sqrt(v / max) * ramp.length))] : "var(--surface-2)";
+
+  const table = el("table", { role: "grid", "aria-label": "Requests per device and domain" },
+    el("thead", {}, el("tr", {}, el("th", {}), ...doms.map(o => el("th", { scope: "col", title: o }, el("span", {}, o))))),
+    el("tbody", {}, ...devs.map(d => el("tr", {},
+      el("th", { scope: "row", title: d }, truncate(devLabel(d), 28)),
+      ...doms.map(o => {
+        const v = cell.get(d + "\t" + o) || 0;
+        const td = el("td", { tabindex: 0, "aria-label": `${devLabel(d)}, ${o}: ${num(v)} requests` });
+        td.style.background = color(v);
+        for (const [k, f] of Object.entries(tipHandlers(num(v) + " requests", [devLabel(d), o]))) td.addEventListener(k.slice(2), f);
+        return td;
+      })))));
+  const key = el("div", { class: "key" }, "Fewer", ...ramp.map(c => { const i = el("i"); i.style.background = c; return i; }), "More requests",
+    el("span", { class: "muted", style: "margin-left:12px" }, `Top ${devs.length} devices × top ${doms.length} domains. Exact numbers are in the table below.`));
+  box.replaceChildren(table, key);
+}
+
+// Sortable table view (devices / domains).
+function renderTable(rows) {
+  const box = document.getElementById("table");
+  const devices = state.tab === "devices";
+  const m = sumBy(rows, devices ? (r => r.ip) : dom);
+  for (const r of rows) {
+    const a = m.get(devices ? r.ip : dom(r));
+    const other = devices ? dom(r) : r.ip;
+    a.set.add(other);
+    a.sub.set(other, (a.sub.get(other) || 0) + r.req);
+    if (!a.first || r.day < a.first) a.first = r.day;
+  }
+  const items = [...m.values()].map(a => {
+    const topKey = [...a.sub.entries()].sort((x, y) => y[1] - x[1])[0];
+    return { ...a, name: devices ? devName(a.key) : "", others: a.set.size, top: topKey ? (devices ? topKey[0] : devLabel(topKey[0])) : "", rate: pct(a.failed, a.req) };
+  });
+  const cols = devices ? [
+    ["name", "Device"], ["key", "IP"], ["req", "Requests", 1], ["others", "Domains", 1], ["top", "Top domain"],
+    ["failed", "Failed", 1], ["bytes", "Data", 1], ["first", "First seen"], ["last", "Last seen"],
+  ] : [
+    ["key", "Domain"], ["req", "Requests", 1], ["others", "Devices", 1], ["top", "Top device"],
+    ["failed", "Failed", 1], ["bytes", "Data", 1], ["first", "First seen"], ["last", "Last seen"],
+  ];
+  const [sortKey, sd] = state.sort[state.tab];
+  items.sort((a, b) => { const x = a[sortKey], y = b[sortKey]; return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sd || b.req - a.req; });
+
+  const fmt = (k, it) => {
+    switch (k) {
+      case "req": case "others": return num(it[k]);
+      case "failed": return it.failed ? `${num(it.failed)} (${fmtPct(it.rate)})` : "–";
+      case "bytes": return bytes(it.bytes);
+      case "first": return fmtDay(it.first);
+      case "last": return `${it.last} · ${ago(it.last)}`;
+      case "name": return it.name || "–";
+      default: return it[k];
+    }
+  };
+  const table = el("table", { class: "data" },
+    el("thead", {}, el("tr", {}, ...cols.map(([k, label, n]) => el("th", {
+      class: n ? "num" : null, scope: "col",
+      "aria-sort": sortKey === k ? (sd > 0 ? "ascending" : "descending") : null,
+      onclick: () => { const cur = state.sort[state.tab]; state.sort[state.tab] = [k, cur[0] === k ? -cur[1] : (n ? -1 : 1)]; render(); },
+    }, label)))),
+    el("tbody", {}, ...items.map(it => el("tr", {
+      title: devices ? "Filter to this device" : "Filter to this domain",
+      onclick: () => { if (devices) state.device = it.key; else state.domain = it.key; render(); scrollTo({ top: 0, behavior: "smooth" }); },
+    }, ...cols.map(([k, , n]) => el("td", { class: n ? "num" : null }, fmt(k, it)))))));
+  box.replaceChildren(items.length ? table : el("div", { class: "empty" }, "No requests in this range"));
+}
+
+// ---------- wiring ----------
+function bindSeg(id, key) {
+  document.getElementById(id).addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    state[key] = b.dataset.v;
+    if (key === "group") state.domain = "";
+    render();
+  });
+}
+bindSeg("range", "range");
+bindSeg("group", "group");
+bindSeg("tabs", "tab");
+document.getElementById("device").addEventListener("change", e => { state.device = e.target.value; render(); });
+document.getElementById("domain").addEventListener("change", e => { state.domain = e.target.value; render(); });
+document.getElementById("clear").addEventListener("click", () => { state.device = ""; state.domain = ""; render(); });
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
