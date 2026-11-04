@@ -71,5 +71,6 @@ done
 
 envsubst </app/privoxy/config >"${TEMP_DIR}/config"
 
-# start
-privoxy --no-daemon "${TEMP_DIR}/config"
+# start - privoxy logs to stderr; send it to stdout so the log/ service
+# (svlogd) can keep the per-request lines for the stats dashboard.
+exec privoxy --no-daemon "${TEMP_DIR}/config" 2>&1

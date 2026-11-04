@@ -3,8 +3,32 @@
 export TEMP_DIR="$(mktemp -d)"
 chown nginx:nginx "${TEMP_DIR}"
 
-# Only TEMP_DIR: the config also uses nginx's own $variables.
-envsubst '${TEMP_DIR}' </app/nginx/config >"${TEMP_DIR}/config"
+export STATS_LOG_DIR="${STATS_LOG_DIR:-/logs}"
+mkdir -p "${STATS_LOG_DIR}/stats/data"
+
+# Access to the /stats dashboard: optional IP allow-list and/or basic auth.
+{
+    if [ -n "${STATS_ALLOW:-}" ]; then
+        for net in $(echo "${STATS_ALLOW}" | tr ',' ' '); do
+            echo "allow ${net};"
+        done
+        echo "deny all;"
+    fi
+    if [ -n "${STATS_PASSWORD:-}" ]; then
+        printf '%s:%s\n' "${STATS_USER:-admin}" "$(mkpasswd -m sha512 "${STATS_PASSWORD}")" \
+            >"${TEMP_DIR}/stats.htpasswd"
+        chown nginx:nginx "${TEMP_DIR}/stats.htpasswd"
+        chmod 600 "${TEMP_DIR}/stats.htpasswd"
+        echo 'auth_basic "Proxy stats";'
+        echo "auth_basic_user_file ${TEMP_DIR}/stats.htpasswd;"
+    fi
+} >"${TEMP_DIR}/stats_access.conf"
+if [ -z "${STATS_ALLOW:-}" ] && [ -z "${STATS_PASSWORD:-}" ]; then
+    echo "WARNING: /stats is open to anyone who can reach this port. Set STATS_PASSWORD and/or STATS_ALLOW to restrict it."
+fi
+
+# Only our own variables: the config also uses nginx's own $variables.
+envsubst '${TEMP_DIR} ${STATS_LOG_DIR}' </app/nginx/config >"${TEMP_DIR}/config"
 envsubst </app/nginx/proxy.pac >"${TEMP_DIR}/proxy.pac"
 cp /client/install.sh /client/install.ps1 "${TEMP_DIR}/"
 

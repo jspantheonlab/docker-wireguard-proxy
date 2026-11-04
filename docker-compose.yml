@@ -12,6 +12,8 @@ services:
     privileged: true
     volumes:
       - ./config/:/config/
+      # Request logs + /stats dashboard data (kept across restarts)
+      - ./logs/:/logs/
     environment: # This needs to change - your local network
       - LOCAL_NETWORK=10.0.8.3/24
       # Create a .env file with these values
@@ -19,6 +21,11 @@ services:
       # VPN_TYPE: wireguard | openvpn
       - VPN_TYPE=wireguard
       - WG_TUNNEL_HOSTS=*.chatgpt.com,*.openai.com,*.oaistatic.com,*.oaiusercontent.com
+      # Timezone for the /stats dashboard (days/hours)
+      # - TZ=Asia/Shanghai
+      # Protect /stats: basic auth and/or an IP allow-list
+      # - STATS_PASSWORD=change-me
+      # - STATS_ALLOW=192.168.50.0/24
     ports:
       - 44081:80
       - 8080:8080
