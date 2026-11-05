@@ -175,7 +175,8 @@ The counters are cumulative and survive restarts and log rotation; their state i
 - requests, active devices, sites, failure rate, data volume and VPN status;
 - requests over time by device and by site;
 - failure rate, data per device and a VPN status timeline;
-- top devices and top sites;
+- top devices and top sites by requests;
+- data usage by device and by site;
 - a device × site table.
 
 Filter by device and site. Note that per-device data in Prometheus is visible to anyone who can query it; `STATS_PASSWORD` only protects `/stats`.

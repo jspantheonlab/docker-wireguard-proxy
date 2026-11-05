@@ -286,7 +286,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\", status_class=~\"4xx|5xx|other\"}[$__range])) / sum(increase(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__range]))",
+          "expr": "(sum(increase(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\", status_class=~\"4xx|5xx|other\"}[$__range])) or vector(0)) / sum(increase(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__range]))",
           "refId": "A",
           "legendFormat": "__auto",
           "range": false,
@@ -643,7 +643,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\", status_class=~\"4xx|5xx|other\"}[$__rate_interval])) / sum(rate(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__rate_interval]))",
+          "expr": "(sum(rate(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\", status_class=~\"4xx|5xx|other\"}[$__rate_interval])) or vector(0)) / sum(rate(proxy_requests_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__rate_interval]))",
           "refId": "A",
           "legendFormat": "failed",
           "range": true,
@@ -853,7 +853,7 @@
     },
     {
       "type": "bargauge",
-      "title": "Top devices",
+      "title": "Top devices by requests",
       "description": "Busiest devices in the selected range.",
       "gridPos": {
         "x": 0,
@@ -920,7 +920,7 @@
     },
     {
       "type": "bargauge",
-      "title": "Top sites",
+      "title": "Top sites by requests",
       "description": "Busiest sites in the selected range.",
       "gridPos": {
         "x": 12,
@@ -986,12 +986,146 @@
       "id": 13
     },
     {
+      "type": "bargauge",
+      "title": "Data usage by device",
+      "description": "Data each device sent and received through the proxy in the selected range (approximate for HTTPS).",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(15, sum by (device_name) (increase(proxy_transfer_bytes_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__range])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{device_name}}",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "valueMode": "text",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 22,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "id": 14
+    },
+    {
+      "type": "bargauge",
+      "title": "Data usage by site",
+      "description": "Data per site through the proxy in the selected range (approximate for HTTPS).",
+      "gridPos": {
+        "x": 12,
+        "y": 30,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(15, sum by (site) (increase(proxy_transfer_bytes_total{job=\"wireguard-proxy\", device_name=~\"$device\", site=~\"$site\"}[$__range])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{site}}",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "valueMode": "text",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "maxVizHeight": 22,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "id": 15
+    },
+    {
       "type": "table",
       "title": "Requests per device and site",
       "description": "Requests in the selected range. Rows are devices, columns are sites.",
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 40,
         "w": 24,
         "h": 12
       },
@@ -1069,7 +1203,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "id": 14
+      "id": 16
     }
   ]
 }
