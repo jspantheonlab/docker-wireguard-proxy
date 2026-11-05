@@ -26,6 +26,8 @@ services:
       # Protect /stats: basic auth and/or an IP allow-list
       # - STATS_PASSWORD=change-me
       # - STATS_ALLOW=192.168.50.0/24
+      # Push usage metrics to Prometheus (OTLP receiver) for Grafana
+      # - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://192.168.50.200:9090/api/v1/otlp/v1/metrics
     ports:
       - 44081:80
       - 8080:8080

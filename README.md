@@ -60,6 +60,7 @@ Pass values for `docker-compose` in `environment` or to `docker run` with `-e "<
 | `STATS_PASSWORD` | No | _none_ | `change-me` | Password for the [usage dashboard](#usage-dashboard). User is `STATS_USER` (default `admin`). |
 | `STATS_ALLOW` | No | _none_ | `192.168.50.10,10.0.0.0/8` | Only these IPs/CIDRs may open the dashboard. |
 | `STATS_DAYS` | No | `90` | `30` | How many days of history the dashboard keeps. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | No | _none_ | `http://192.168.50.200:9090/api/v1/otlp/v1/metrics` | Push usage metrics over OTLP/HTTP to this URL. See [Metrics](#metrics-prometheus--grafana). |
 
 ### Ports
 
@@ -143,6 +144,41 @@ iptables -t nat -C DEFAULT_PREROUTING $R 2>/dev/null || iptables -t nat -I DEFAU
 ```
 
 To undo it, run the same command with `-D` instead of `-I 1`. Setting `"userland-proxy": false` in Container Manager's `dockerd.json` does not help on DSM.
+
+## Metrics (Prometheus / Grafana)
+
+The proxy can also push its usage counts as OpenTelemetry metrics (OTLP/HTTP, JSON) every minute, for example to Prometheus' OTLP receiver. It's push-based, so Prometheus needs no scrape config, only `--web.enable-otlp-receiver`:
+
+```yaml
+environment:
+  - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://192.168.50.200:9090/api/v1/otlp/v1/metrics
+```
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` also works (`/v1/metrics` is appended), and `OTEL_EXPORTER_OTLP_HEADERS=key=value,...` adds headers such as `Authorization=Bearer …`. Push failures are logged to the container log as `otel: push … failed`.
+
+| Metric (as shown in Prometheus) | Labels | Meaning |
+|---|---|---|
+| `proxy_requests_total` | `device`, `device_name`, `site`, `status_class` | Requests through the proxy |
+| `proxy_transfer_bytes_total` | same | Bytes through the proxy (approximate for HTTPS) |
+| `proxy_vpn_up` | `vpn_type` | 1 if the WireGuard/OpenVPN interface is up |
+
+All series carry `job="wireguard-proxy"`, and `instance` comes from `WG_HOST`.
+
+- `device` is the IP. `device_name` comes from `devices.txt`, and falls back to the IP. Renaming a device starts a new series.
+- `site` groups subdomains (`api.openai.com` → `openai.com`). To keep the number of series bounded, at most `OTEL_MAX_SITES` sites are tracked (default 100); any beyond that are counted as `other`.
+- `status_class` is `2xx`/`3xx`/`4xx`/`5xx`. A 4xx or 5xx comes from the proxy itself, e.g. when the site is unreachable.
+
+The counters are cumulative and survive restarts and log rotation; their state is kept in `/logs/stats/otel`. Counting starts when export is first enabled, with no backfill. A long-lived HTTPS connection is counted when it closes, because that's when Privoxy logs it.
+
+**Grafana dashboard:** import [`grafana/proxy-usage.json`](grafana/proxy-usage.json) (Dashboards → New → Import) and pick your Prometheus data source. It shows:
+
+- requests, active devices, sites, failure rate, data volume and VPN status;
+- requests over time by device and by site;
+- failure rate, data per device and a VPN status timeline;
+- top devices and top sites;
+- a device × site table.
+
+Filter by device and site. Note that per-device data in Prometheus is visible to anyone who can query it; `STATS_PASSWORD` only protects `/stats`.
 
 ## Split Tunneling
 

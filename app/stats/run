@@ -1,11 +1,13 @@
 #!/bin/sh
 
-# Rebuilds the /stats dashboard data every STATS_INTERVAL seconds.
+# Rebuilds the /stats dashboard data every STATS_INTERVAL seconds and, when
+# an OTLP endpoint is set, pushes metrics (app/stats/otel.sh).
 exec 2>&1
 
 INTERVAL="${STATS_INTERVAL:-60}"
 echo "stats: aggregating proxy logs every ${INTERVAL}s"
 while :; do
     /app/stats/aggregate.sh || echo "stats: aggregation failed"
+    /app/stats/otel.sh || echo "otel: export failed"
     sleep "${INTERVAL}"
 done
