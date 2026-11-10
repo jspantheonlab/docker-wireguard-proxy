@@ -165,7 +165,7 @@ environment:
 All series carry `job="wireguard-proxy"`, and `instance` comes from `WG_HOST`.
 
 - `device` is the IP. `device_name` comes from `devices.txt`, and falls back to the IP. Renaming a device starts a new series.
-- `site` groups subdomains (`api.openai.com` → `openai.com`). To keep the number of series bounded, at most `OTEL_MAX_SITES` sites are tracked (default 100); any beyond that are counted as `other`.
+- `site` groups subdomains (`api.openai.com` → `openai.com`). To keep the number of series bounded, a site only gets its own series once it has moved `OTEL_SITE_MIN_BYTES` bytes (default 10485760, 10 MiB), and at most `OTEL_MAX_SITES` sites get one (default 100). Until then its traffic is counted as `other`, and stays there afterwards, so `other` shrinks over time rather than disappearing.
 - `status_class` is `2xx`/`3xx`/`4xx`/`5xx`. A 4xx or 5xx comes from the proxy itself, e.g. when the site is unreachable.
 
 The counters are cumulative and survive restarts and log rotation; their state is kept in `/logs/stats/otel`. Counting starts when export is first enabled, with no backfill. A long-lived HTTPS connection is counted when it closes, because that's when Privoxy logs it.

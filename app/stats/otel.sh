@@ -8,6 +8,9 @@
 #   proxy_transfer_bytes_total{device, device_name, site, status_class}
 #   proxy_vpn_up{vpn_type}
 #
+# "site" is "other" for sites below OTEL_SITE_MIN_BYTES of traffic so far or
+# beyond OTEL_MAX_SITES; see the main awk program.
+#
 # Counters are cumulative since STATE was created and survive restarts and
 # log rotation: each run reads only the complete lines added to each log
 # file since the last run (tracked by inode + line count), adds them to the
@@ -29,6 +32,8 @@ DIR="${LOG_DIR}/stats/otel"
 STATE="${DIR}/state.tsv"
 DEVICES="${STATS_DEVICES:-${WG_CONFIG:-/config}/devices.txt}"
 MAX_SITES="${OTEL_MAX_SITES:-100}"
+# A site gets its own series once it has moved this many bytes (default 10 MiB).
+MIN_BYTES="${OTEL_SITE_MIN_BYTES:-10485760}"
 INSTANCE="${OTEL_SERVICE_INSTANCE_ID:-${WG_HOST:-$(hostname)}}"
 
 mkdir -p "${DIR}"
@@ -71,7 +76,7 @@ done
 
 # Fold the new lines into the totals and write the next state in one step.
 [ -f "${STATE}" ] || printf 'S\t%s\n' "${NOW_NS}" >"${STATE}"
-awk -F '\t' -v max_sites="${MAX_SITES}" -v pos="${POS}" -v statef="${STATE}" '
+awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v max_pending=5000 -v pos="${POS}" -v statef="${STATE}" '
     function site(h,    n, p, last2) {
         if (h ~ /^\[/ || h ~ /^[0-9.]+$/) return h
         n = split(h, p, ".")
@@ -84,9 +89,10 @@ awk -F '\t' -v max_sites="${MAX_SITES}" -v pos="${POS}" -v statef="${STATE}" '
     FILENAME == statef && $1 == "C" {
         k = $2 "\t" $3 "\t" $4
         req[k] = $5; byt[k] = $6
-        if (!($3 in known)) { known[$3] = 1; nsites++ }
+        if ($3 != "other" && !($3 in known)) { known[$3] = 1; nsites++ }
         next
     }
+    FILENAME == statef && $1 == "P" { pend[$2] = $3; next }
     FILENAME == statef { next }
     {
         # CLF: ip - - [ts] "METHOD target HTTP/x" status bytes
@@ -109,21 +115,39 @@ awk -F '\t' -v max_sites="${MAX_SITES}" -v pos="${POS}" -v statef="${STATE}" '
         sub(/\/.*/, "", host)
         if (substr(host, 1, 1) == "[") host = substr(host, 1, index(host, "]"))
         else sub(/:[0-9]+$/, "", host)
+        b = sb[2] + 0
         s = site(tolower(host))
-        if (!(s in known)) {
-            if (nsites >= max_sites) s = "other"
-            else { known[s] = 1; nsites++ }
+        # A site gets its own series once its traffic reaches min_bytes (and
+        # a slot is free); until then it is counted as "other". Bytes already
+        # in "other" stay there, so every counter only ever goes up.
+        if (s != "other" && !(s in known)) {
+            pend[s] += b
+            if (pend[s] >= min_bytes && nsites < max_sites) {
+                known[s] = 1; nsites++
+                delete pend[s]
+            } else s = "other"
         }
         st = sb[1] + 0
         cls = (st >= 100 && st < 600) ? int(st / 100) "xx" : "other"
         k = ip "\t" s "\t" cls
         if (!(k in req)) fresh[k] = 1
         req[k] += 1
-        byt[k] += sb[2] + 0
+        byt[k] += b
     }
     END {
         printf "S\t%s\n", start
         while ((getline line < pos) > 0) print line
+        # Traffic so far of sites still counted as "other". Keep the list
+        # bounded: past max_pending entries, forget the smallest ones.
+        np = 0
+        for (s in pend) np++
+        floor = 0
+        while (np > max_pending) {
+            floor = floor ? floor * 4 : 1024
+            np = 0
+            for (s in pend) if (pend[s] >= floor) np++
+        }
+        for (s in pend) if (pend[s] >= floor) printf "P\t%s\t%.0f\n", s, pend[s]
         # Column 7 marks series first seen in this run (see "fresh" below).
         for (k in req) printf "C\t%s\t%d\t%.0f\t%d\n", k, req[k], byt[k], (k in fresh)
     }' "${STATE}" "${NEW}" >"${STATE}.tmp" && mv "${STATE}.tmp" "${STATE}"
