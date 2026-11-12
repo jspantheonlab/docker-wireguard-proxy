@@ -458,17 +458,80 @@ reachable() {
   fi
 }
 
-# 0 = on, 1 = off, 2 = no IP yet (leave things alone; avoids flapping
-# when a location switch briefly drops the address)
+# MAC of the default gateway, to tell the office router from a lookalike
+# network on the same subnet without needing anything beyond the LAN.
+gateway_mac() {
+  local gw mac
+  if [ "$OS" = Darwin ]; then
+    gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+    [ -n "$gw" ] || return 1
+    mac=$(arp -n "$gw" 2>/dev/null | awk '/ at /{print $4; exit}')
+    case $mac in *:*) ;; *)
+      ping -c 1 -t 1 "$gw" >/dev/null 2>&1
+      mac=$(arp -n "$gw" 2>/dev/null | awk '/ at /{print $4; exit}') ;;
+    esac
+  else
+    gw=$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')
+    [ -n "$gw" ] || return 1
+    mac=$(ip neigh show "$gw" 2>/dev/null | awk '/lladdr/{print $5; exit}')
+    case $mac in *:*) ;; *)
+      ping -c 1 -W 1 "$gw" >/dev/null 2>&1
+      mac=$(ip neigh show "$gw" 2>/dev/null | awk '/lladdr/{print $5; exit}') ;;
+    esac
+  fi
+  case $mac in *:*) echo "$mac" ;; *) return 1 ;; esac
+}
+
+OFFICE_GW=$CONF/office-gateway   # gateway MAC at the last good office check
+CHECK_FAILING=$CONF/office-check-failing
+
+# 0 = on, 1 = off, 2 = leave things alone: no IP yet (a location switch
+# briefly drops the address), or the office check failed while we're still
+# behind the office gateway -- the network is half up (wake from sleep,
+# Wi-Fi roaming), and flipping to direct would just restart gost twice.
 proxy_wanted() {
-  local ip i
+  local ip i gw
   for i in 1 2 3 4 5 6 7 8 9 10; do
     ip=$(local_ip)
     [ -n "$ip" ] && break
     sleep 1
   done
   [ -z "$ip" ] && return 2
-  case $ip in "$OFFICE_NET"*) office_pac && reachable ;; *) return 1 ;; esac
+  case $ip in "$OFFICE_NET"*) ;; *) rm -f "$CHECK_FAILING"; return 1 ;; esac
+  gw=$(gateway_mac)
+  if office_pac && reachable; then
+    [ -n "$gw" ] && echo "$gw" > "$OFFICE_GW"
+    if [ -f "$CHECK_FAILING" ]; then rm -f "$CHECK_FAILING"; log "office check: ok again"; fi
+    return 0
+  fi
+  # No gateway MAC at all means the link is up but not passing traffic yet
+  # (USB Ethernet adapters after wake); a lookalike network would answer.
+  # Switching to direct here would also leave a manual-IP office location
+  # for DHCP, which is exactly what fails on such a link.
+  if [ -z "$gw" ] || { [ -f "$OFFICE_GW" ] && [ "$gw" = "$(cat "$OFFICE_GW")" ]; }; then
+    if [ ! -f "$CHECK_FAILING" ]; then
+      if [ -n "$gw" ]; then
+        log "office check: failed behind the office gateway; keeping current mode"
+      else
+        log "office check: failed with the gateway not answering; keeping current mode"
+      fi
+    fi
+    touch "$CHECK_FAILING"
+    return 2
+  fi
+  rm -f "$CHECK_FAILING"
+  return 1
+}
+
+# Power Nap / maintenance wakes ("DarkWake") bring the network only partly
+# up and fire our network-change trigger every ~15 min while asleep. Nobody
+# is using the proxy then; judge the network on a real wake instead.
+dark_wake() {
+  [ "$OS" = Darwin ] || return 1
+  local caps
+  caps=$(pmset -g systemstate 2>/dev/null) || return 1
+  case $caps in *"Capabilities are:"*) ;; *) return 1 ;; esac
+  case $caps in *Graphics*) return 1 ;; *) return 0 ;; esac
 }
 
 # Switching location changes SystemConfiguration, which re-runs us (launchd
@@ -574,6 +637,7 @@ set_gost() {  # $1 = on|off
 
 check() {
   local state
+  dark_wake && return 0
   settle
   proxy_wanted
   case $? in
