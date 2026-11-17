@@ -8,8 +8,9 @@
 #   proxy_transfer_bytes_total{device, device_name, site, status_class}
 #   proxy_vpn_up{vpn_type}
 #
-# "site" is "other" for sites below OTEL_SITE_MIN_BYTES of traffic so far or
-# beyond OTEL_MAX_SITES; see the main awk program.
+# "site" is "other" for sites below both OTEL_SITE_MIN_BYTES and
+# OTEL_SITE_MIN_REQUESTS so far, or beyond OTEL_MAX_SITES; see the main awk
+# program.
 #
 # Counters are cumulative since STATE was created and survive restarts and
 # log rotation: each run reads only the complete lines added to each log
@@ -34,6 +35,9 @@ DEVICES="${STATS_DEVICES:-${WG_CONFIG:-/config}/devices.txt}"
 MAX_SITES="${OTEL_MAX_SITES:-100}"
 # A site gets its own series once it has moved this many bytes (default 10 MiB).
 MIN_BYTES="${OTEL_SITE_MIN_BYTES:-10485760}"
+# ...or once it has made this many requests, so chatty low-volume sites
+# (telemetry, APIs) do not all end up in "other".
+MIN_REQUESTS="${OTEL_SITE_MIN_REQUESTS:-500}"
 INSTANCE="${OTEL_SERVICE_INSTANCE_ID:-${WG_HOST:-$(hostname)}}"
 
 mkdir -p "${DIR}"
@@ -76,7 +80,7 @@ done
 
 # Fold the new lines into the totals and write the next state in one step.
 [ -f "${STATE}" ] || printf 'S\t%s\n' "${NOW_NS}" >"${STATE}"
-awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v max_pending=5000 -v pos="${POS}" -v statef="${STATE}" '
+awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v min_reqs="${MIN_REQUESTS}" -v max_pending=5000 -v pos="${POS}" -v statef="${STATE}" '
     function site(h,    n, p, last2) {
         if (h ~ /^\[/ || h ~ /^[0-9.]+$/) return h
         n = split(h, p, ".")
@@ -92,7 +96,7 @@ awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v max_pendi
         if ($3 != "other" && !($3 in known)) { known[$3] = 1; nsites++ }
         next
     }
-    FILENAME == statef && $1 == "P" { pend[$2] = $3; next }
+    FILENAME == statef && $1 == "P" { pend[$2] = $3; pendr[$2] = $4 + 0; next }
     FILENAME == statef { next }
     {
         # CLF: ip - - [ts] "METHOD target HTTP/x" status bytes
@@ -117,14 +121,16 @@ awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v max_pendi
         else sub(/:[0-9]+$/, "", host)
         b = sb[2] + 0
         s = site(tolower(host))
-        # A site gets its own series once its traffic reaches min_bytes (and
-        # a slot is free); until then it is counted as "other". Bytes already
-        # in "other" stay there, so every counter only ever goes up.
+        # A site gets its own series once its traffic reaches min_bytes or
+        # min_reqs (and a slot is free); until then it is counted as "other".
+        # Traffic already in "other" stays there, so every counter only ever
+        # goes up.
         if (s != "other" && !(s in known)) {
             pend[s] += b
-            if (pend[s] >= min_bytes && nsites < max_sites) {
+            pendr[s] += 1
+            if ((pend[s] >= min_bytes || pendr[s] >= min_reqs) && nsites < max_sites) {
                 known[s] = 1; nsites++
-                delete pend[s]
+                delete pend[s]; delete pendr[s]
             } else s = "other"
         }
         st = sb[1] + 0
@@ -138,16 +144,21 @@ awk -F '\t' -v max_sites="${MAX_SITES}" -v min_bytes="${MIN_BYTES}" -v max_pendi
         printf "S\t%s\n", start
         while ((getline line < pos) > 0) print line
         # Traffic so far of sites still counted as "other". Keep the list
-        # bounded: past max_pending entries, forget the smallest ones.
+        # bounded: past max_pending entries, forget the smallest ones, as a
+        # fraction of the way to either threshold.
         np = 0
-        for (s in pend) np++
+        for (s in pend) {
+            score[s] = pend[s] / min_bytes
+            if (pendr[s] / min_reqs > score[s]) score[s] = pendr[s] / min_reqs
+            np++
+        }
         floor = 0
         while (np > max_pending) {
-            floor = floor ? floor * 4 : 1024
+            floor = floor ? floor * 4 : 0.0001
             np = 0
-            for (s in pend) if (pend[s] >= floor) np++
+            for (s in pend) if (score[s] >= floor) np++
         }
-        for (s in pend) if (pend[s] >= floor) printf "P\t%s\t%.0f\n", s, pend[s]
+        for (s in pend) if (score[s] >= floor) printf "P\t%s\t%.0f\t%d\n", s, pend[s], pendr[s]
         # Column 7 marks series first seen in this run (see "fresh" below).
         for (k in req) printf "C\t%s\t%d\t%.0f\t%d\n", k, req[k], byt[k], (k in fresh)
     }' "${STATE}" "${NEW}" >"${STATE}.tmp" && mv "${STATE}.tmp" "${STATE}"
